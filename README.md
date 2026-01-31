@@ -1,19 +1,19 @@
-# Coffee Watch (Portfolio Edition)
+# Coffee Watch
 
-A low-frequency monitoring agent that checks specialty coffee roasters for new releases and evaluates them with Gemini + Google Search grounding. This repo is designed to showcase **production-grade MLE + backend engineering** with a strong emphasis on **ethical, transparent data collection**.
+A low-frequency monitoring agent that checks specialty coffee roasters for new releases and evaluates them with Gemini + Google Search grounding.
 
-## Why this repo is safe to publish
-- No secrets checked in; API keys are read from environment variables at runtime.
-- Generated artifacts (logs, reports, local DB) are excluded via `.gitignore`.
-- Network behavior is polite and transparent (strict User-Agent, robots.txt compliance, jittered requests).
+## Highlights
+- Polite crawling with robots.txt checks, jittered pacing, and a fixed User-Agent.
+- Batch evaluation with grounded Gemini outputs and saved markdown reports.
+- Config-driven sources for easy customization.
+- Structured logs for requests, prompts, and outcomes.
+- Stateless runs; outputs are written to `reports/` and `logs/`.
 
-## Key features
-- **Polite network layer**: async `httpx` with HTTP/2, robots.txt checks, jittered pacing.
-- **Transparent identity**: strict User-Agent string that points to this repo and a contact channel.
-- **Low-frequency monitoring**: designed to run occasionally, not crawl aggressively.
-- **Grounded evaluation**: Gemini with Google Search grounding for each roaster batch.
-- **Structured logging**: rich logs for requests, prompts, grounding, and outcomes.
-- **Fresh evaluation every run**: no dedupe/persistence yet (intentional for now).
+## How it works
+1. Load roaster sources from `config/roasters.json`.
+2. Fetch product lists and (optionally) product pages with robots.txt compliance.
+3. Build a batch prompt from product metadata and sanitized page text.
+4. Generate a per-roaster report and an optional digest report.
 
 ## Code structure
 - `main.py` is the thin entrypoint that calls `coffee_watch/cli.py`.
@@ -43,6 +43,12 @@ Override on the CLI:
 ```bash
 python main.py --language zh --http-concurrency 4 --skip-gemini
 python main.py --gemini-timeout-s 600
+```
+
+### Testing
+Basic sanity check:
+```bash
+python -m py_compile main.py coffee_watch/*.py
 ```
 
 ### Config file overrides
@@ -93,7 +99,9 @@ Notes:
 - `reports/` — Markdown reports + prompt captures
 - `logs/coffee_watch.log` — request/response and Gemini traces
 
-## Bot Policy & Opt-out
+## Support & Opt-out
+For questions or issues, open a GitHub Issue.
+
 This bot runs at low volume and obeys robots.txt. If you are a site owner and prefer not to be monitored, please open a GitHub Issue, and we will add your domain to our denylist immediately.
 
 ## License
