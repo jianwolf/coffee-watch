@@ -15,6 +15,14 @@ A low-frequency monitoring agent that checks specialty coffee roasters for new r
 - **Structured logging**: rich logs for requests, prompts, grounding, and outcomes.
 - **Fresh evaluation every run**: no dedupe/persistence yet (intentional for now).
 
+## Code structure
+- `main.py` is the thin entrypoint that calls `coffee_watch/cli.py`.
+- `coffee_watch/runner.py` orchestrates the run lifecycle and report generation.
+- `coffee_watch/network.py` handles HTTP, robots.txt, and jittered fetches.
+- `coffee_watch/parsing.py` parses roaster configs and product lists.
+- `coffee_watch/prompts.py` builds Gemini prompts and language helpers.
+- `coffee_watch/gemini.py` wraps Gemini calls + grounding extraction.
+
 ## Quickstart
 ```bash
 python -m venv .venv
@@ -75,7 +83,7 @@ Notes:
 - Only `GEMINI_API_KEY` is read from the environment.
 - Descriptions are extracted from product `body_html` (when available).
 - `gemini_timeout_s` controls Gemini request timeouts in seconds (0 = no timeout).
-- Reports are saved as `YYYYMMDD-N-roaster-slug.md` (UTC date + run sequence).
+- Reports are saved as `YYYYMMDD-roaster-slug.md` and `YYYYMMDD-digest.md` (UTC date).
 
 ## Configuration
 - `config/roasters.json` controls sources, endpoints, and per-roaster settings.
