@@ -59,8 +59,8 @@ Example `config/settings.json`:
   "log_json_max_chars": 0,
   "fetch_only": false,
   "skip_gemini": false,
-  "save_prompt": true,
-  "save_pretty_products_json": true,
+  "save_prompt": false,
+  "save_pretty_products_json": false,
   "save_raw_products_json": false,
   "save_report": true,
   "roasters_path": "config/roasters.json",
@@ -75,6 +75,7 @@ Notes:
 - Only `GEMINI_API_KEY` is read from the environment.
 - Descriptions are extracted from product `body_html` (when available).
 - `gemini_timeout_s` controls Gemini request timeouts in seconds (0 = no timeout).
+- Reports are saved as `YYYYMMDD-N-roaster-slug.md` (UTC date + run sequence).
 
 ## Configuration
 - `config/roasters.json` controls sources, endpoints, and per-roaster settings.

@@ -67,8 +67,8 @@ class Settings:
             log_json_max_chars=0,
             fetch_only=False,
             skip_gemini=False,
-            save_prompt=True,
-            save_pretty_products_json=True,
+            save_prompt=False,
+            save_pretty_products_json=False,
             save_raw_products_json=False,
             save_report=True,
             roasters_path=Path("config/roasters.json"),
@@ -464,13 +464,33 @@ def report_file_path(
     reports_dir: Path,
     roaster_name: str,
     run_id: str,
-    kind: str,
+    kind: Optional[str],
     ext: str,
 ) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     slug = safe_slug(roaster_name)
-    filename = f"{slug}.{kind}.{run_id}.{ext}"
+    base = f"{run_id}-{slug}"
+    filename = f"{base}.{ext}" if not kind else f"{base}.{kind}.{ext}"
     return reports_dir / filename
+
+
+def next_run_sequence(reports_dir: Path, date_str: str) -> int:
+    if not reports_dir.exists():
+        return 1
+    pattern = re.compile(rf"^{re.escape(date_str)}-(\d+)-")
+    max_seq = 0
+    for entry in reports_dir.iterdir():
+        if not entry.is_file():
+            continue
+        match = pattern.match(entry.name)
+        if not match:
+            continue
+        try:
+            seq = int(match.group(1))
+        except ValueError:
+            continue
+        max_seq = max(max_seq, seq)
+    return max_seq + 1
 
 
 def save_products_json(
@@ -481,7 +501,11 @@ def save_products_json(
     json_text: str,
 ) -> Path:
     path = report_file_path(
-        report_dir, roaster.name, f"{run_id}-page{page_index}", "products.raw", "json"
+        report_dir,
+        roaster.name,
+        run_id,
+        f"products.raw.page{page_index}",
+        "json",
     )
     path.write_text(json_text, encoding="utf-8")
     return path
@@ -499,7 +523,11 @@ def save_products_json_pretty(
     except (TypeError, ValueError):
         return None
     path = report_file_path(
-        report_dir, roaster.name, f"{run_id}-page{page_index}", "products.pretty", "json"
+        report_dir,
+        roaster.name,
+        run_id,
+        f"products.pretty.page{page_index}",
+        "json",
     )
     path.write_text(pretty, encoding="utf-8")
     return path
@@ -1721,7 +1749,7 @@ def record_evaluation(
 
 
 def make_report_path(reports_dir: Path, roaster_name: str, run_id: str) -> Path:
-    return report_file_path(reports_dir, roaster_name, run_id, "report", "md")
+    return report_file_path(reports_dir, roaster_name, run_id, None, "md")
 
 
 def save_prompt_text(
@@ -1966,7 +1994,9 @@ async def run(settings: Settings) -> int:
         logger.info("Loaded %d denylisted domains.", len(denylist))
 
     robots_cache: dict[str, RobotFileParser] = {}
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+    run_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    run_sequence = next_run_sequence(settings.reports_dir, run_date)
+    run_id = f"{run_date}-{run_sequence}"
     timeout = httpx.Timeout(settings.http_timeout_s)
     http_semaphore = asyncio.Semaphore(max(1, settings.http_concurrency))
     async with httpx.AsyncClient(
