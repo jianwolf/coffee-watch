@@ -12,33 +12,42 @@
   {
     "name": "Prodigal Coffee",
     "base_url": "https://getprodigal.com",
-    "products_path": "/products.json",
+    "products_path": "/collections/roasted-coffee/products.json",
     "products_type": "json",
-    "enabled": false,
+    "products_params": {
+      "limit": "250"
+    },
     "max_products": 200
   },
   {
     "name": "SEY Coffee",
     "base_url": "https://www.seycoffee.com",
-    "products_path": "/products.json",
+    "products_path": "/collections/coffee/products.json",
     "products_type": "json",
-    "enabled": false,
+    "products_params": {
+      "limit": "250"
+    },
     "max_products": 200
   },
   {
     "name": "Onyx Coffee Lab",
     "base_url": "https://onyxcoffeelab.com",
-    "products_path": "/products.json",
+    "products_path": "/collections/coffee/products.json",
     "products_type": "json",
-    "enabled": false,
+    "products_params": {
+      "limit": "250"
+    },
+    "enabled": true,
     "max_products": 200
   },
   {
     "name": "Black & White Roasters",
     "base_url": "https://www.blackwhiteroasters.com",
-    "products_path": "/products.json",
+    "products_path": "/collections/all-coffee/products.json",
     "products_type": "json",
-    "enabled": false,
+    "products_params": {
+      "limit": "250"
+    },
     "max_products": 200
   }
 ]
