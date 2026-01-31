@@ -1,0 +1,2 @@
+# Domains to skip (one per line). Example:
+# example.com

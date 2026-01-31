@@ -1,0 +1,44 @@
+[
+  {
+    "name": "Little Wolf Coffee",
+    "base_url": "https://littlewolf.coffee",
+    "products_path": "/collections/coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
+  },
+  {
+    "name": "Prodigal Coffee",
+    "base_url": "https://getprodigal.com",
+    "products_path": "/products.json",
+    "products_type": "json",
+    "enabled": false,
+    "max_products": 200
+  },
+  {
+    "name": "SEY Coffee",
+    "base_url": "https://www.seycoffee.com",
+    "products_path": "/products.json",
+    "products_type": "json",
+    "enabled": false,
+    "max_products": 200
+  },
+  {
+    "name": "Onyx Coffee Lab",
+    "base_url": "https://onyxcoffeelab.com",
+    "products_path": "/products.json",
+    "products_type": "json",
+    "enabled": false,
+    "max_products": 200
+  },
+  {
+    "name": "Black & White Roasters",
+    "base_url": "https://www.blackwhiteroasters.com",
+    "products_path": "/products.json",
+    "products_type": "json",
+    "enabled": false,
+    "max_products": 200
+  }
+]
