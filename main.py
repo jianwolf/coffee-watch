@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import hashlib
 import inspect
@@ -29,6 +30,7 @@ USER_AGENT = "CoffeeWatch-Bot/1.0 (+https://github.com/jianwolf/coffee-watch; co
 @dataclass(frozen=True)
 class Settings:
     model: str
+    gemini_timeout_s: float
     http_timeout_s: float
     jitter_min_s: float
     jitter_max_s: float
@@ -51,49 +53,30 @@ class Settings:
     language: str
 
     @staticmethod
-    def from_env() -> "Settings":
-        def env_bool(key: str, default: bool) -> bool:
-            value = os.getenv(key)
-            if value is None:
-                return default
-            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-
-        def env_float(key: str, default: float) -> float:
-            value = os.getenv(key)
-            return float(value) if value else default
-
-        def env_int(key: str, default: int) -> int:
-            value = os.getenv(key)
-            return int(value) if value else default
-
+    def defaults() -> "Settings":
         return Settings(
-            model=os.getenv("COFFEEWATCH_MODEL", "gemini-3-pro-preview"),
-            http_timeout_s=env_float("COFFEEWATCH_HTTP_TIMEOUT_S", 20.0),
-            jitter_min_s=env_float("COFFEEWATCH_JITTER_MIN_S", 0.7),
-            jitter_max_s=env_float("COFFEEWATCH_JITTER_MAX_S", 2.0),
-            http_concurrency=env_int("COFFEEWATCH_HTTP_CONCURRENCY", 4),
-            max_products_per_source=env_int("COFFEEWATCH_MAX_PRODUCTS", 200),
-            page_text_max_chars=env_int("COFFEEWATCH_PAGE_TEXT_MAX_CHARS", 0),
-            batch_page_text_max_chars=env_int(
-                "COFFEEWATCH_BATCH_PAGE_TEXT_MAX_CHARS", 0
-            ),
-            log_json_max_chars=env_int("COFFEEWATCH_LOG_JSON_MAX_CHARS", 0),
-            fetch_only=env_bool("COFFEEWATCH_FETCH_ONLY", False),
-            skip_gemini=env_bool("COFFEEWATCH_SKIP_GEMINI", False),
-            save_prompt=env_bool("COFFEEWATCH_SAVE_PROMPT", True),
-            save_pretty_products_json=env_bool(
-                "COFFEEWATCH_SAVE_PRETTY_PRODUCTS_JSON", True
-            ),
-            save_raw_products_json=env_bool(
-                "COFFEEWATCH_SAVE_RAW_PRODUCTS_JSON", False
-            ),
-            save_report=env_bool("COFFEEWATCH_SAVE_REPORT", True),
-            roasters_path=Path(os.getenv("COFFEEWATCH_ROASTERS_PATH", "config/roasters.json")),
-            denylist_path=Path(os.getenv("COFFEEWATCH_DENYLIST_PATH", "config/denylist.txt")),
-            reports_dir=Path(os.getenv("COFFEEWATCH_REPORTS_DIR", "reports")),
-            log_path=Path(os.getenv("COFFEEWATCH_LOG_PATH", "logs/coffee_watch.log")),
-            log_level=os.getenv("COFFEEWATCH_LOG_LEVEL", "INFO"),
-            language=os.getenv("COFFEEWATCH_LANGUAGE", "en"),
+            model="gemini-3-pro-preview",
+            gemini_timeout_s=600.0,
+            http_timeout_s=20.0,
+            jitter_min_s=0.7,
+            jitter_max_s=2.0,
+            http_concurrency=4,
+            max_products_per_source=200,
+            page_text_max_chars=0,
+            batch_page_text_max_chars=0,
+            log_json_max_chars=0,
+            fetch_only=False,
+            skip_gemini=False,
+            save_prompt=True,
+            save_pretty_products_json=True,
+            save_raw_products_json=False,
+            save_report=True,
+            roasters_path=Path("config/roasters.json"),
+            denylist_path=Path("config/denylist.txt"),
+            reports_dir=Path("reports"),
+            log_path=Path("logs/coffee_watch.log"),
+            log_level="INFO",
+            language="zh",
         )
 
 
@@ -200,7 +183,7 @@ class LinkParser(HTMLParser):
 
 
 class VisibleTextExtractor(HTMLParser):
-    _skip_tags = {"script", "style", "head", "noscript", "svg", "meta", "link"}
+    _skip_tags = {"script", "style", "head", "noscript", "svg", "canvas"}
 
     def __init__(self) -> None:
         super().__init__()
@@ -263,6 +246,130 @@ def setup_logging(level: str) -> None:
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
     root.addHandler(stream)
+
+
+def add_bool_flag(
+    parser: argparse.ArgumentParser, name: str, help_text: str, default: Optional[bool]
+) -> None:
+    dest = name.replace("-", "_")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(f"--{name}", dest=dest, action="store_true", help=help_text)
+    group.add_argument(
+        f"--no-{name}", dest=dest, action="store_false", help=f"Disable {help_text}"
+    )
+    parser.set_defaults(**{dest: default})
+
+
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Coffee Watch monitoring agent")
+    parser.add_argument("--config", type=Path, help="Path to JSON config file")
+    parser.add_argument("--model", type=str, help="Gemini model ID")
+    parser.add_argument(
+        "--gemini-timeout-s",
+        type=float,
+        help="Gemini request timeout in seconds (0 = no timeout)",
+    )
+    parser.add_argument("--http-timeout-s", type=float, help="HTTP timeout in seconds")
+    parser.add_argument("--jitter-min-s", type=float, help="Minimum jitter sleep (s)")
+    parser.add_argument("--jitter-max-s", type=float, help="Maximum jitter sleep (s)")
+    parser.add_argument(
+        "--http-concurrency", type=int, help="Max concurrent HTTP requests"
+    )
+    parser.add_argument(
+        "--max-products-per-source",
+        type=int,
+        help="Max products to process per roaster",
+    )
+    parser.add_argument(
+        "--page-text-max-chars",
+        type=int,
+        help="Max chars for per-page text (0 = no limit)",
+    )
+    parser.add_argument(
+        "--batch-page-text-max-chars",
+        type=int,
+        help="Max chars for batch page text (0 = no limit)",
+    )
+    parser.add_argument(
+        "--log-json-max-chars",
+        type=int,
+        help="Max chars when logging raw products JSON (0 = no limit)",
+    )
+    add_bool_flag(parser, "fetch-only", "fetch only (no Gemini calls)", None)
+    add_bool_flag(parser, "skip-gemini", "skip Gemini calls", None)
+    add_bool_flag(parser, "save-prompt", "save Gemini prompt files", None)
+    add_bool_flag(
+        parser, "save-pretty-products-json", "save pretty products JSON", None
+    )
+    add_bool_flag(parser, "save-raw-products-json", "save raw products JSON", None)
+    add_bool_flag(parser, "save-report", "save Gemini reports", None)
+    parser.add_argument("--roasters-path", type=Path, help="Path to roasters JSON")
+    parser.add_argument("--denylist-path", type=Path, help="Path to denylist file")
+    parser.add_argument("--reports-dir", type=Path, help="Reports output directory")
+    parser.add_argument("--log-path", type=Path, help="Log file path")
+    parser.add_argument("--log-level", type=str, help="Log level (e.g. INFO)")
+    parser.add_argument(
+        "--language", type=str, help="Report language: en or zh (简体中文)"
+    )
+    return parser.parse_args(argv)
+
+
+def load_config_file(path: Optional[Path]) -> dict[str, Any]:
+    if path is None:
+        return {}
+    if not path.exists():
+        print(f"Config file not found: {path}", file=sys.stderr)
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"Invalid config JSON ({path}): {exc}", file=sys.stderr)
+        return {}
+    if not isinstance(data, dict):
+        print(f"Config file must contain a JSON object: {path}", file=sys.stderr)
+        return {}
+    return data
+
+
+def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings:
+    defaults = Settings.defaults()
+
+    def pick_value(field: str) -> Any:
+        value = getattr(args, field, None)
+        if value is not None:
+            return value
+        if field in config and config[field] is not None:
+            return config[field]
+        return getattr(defaults, field)
+
+    def pick_path(field: str) -> Path:
+        value = pick_value(field)
+        return value if isinstance(value, Path) else Path(str(value))
+
+    return Settings(
+        model=str(pick_value("model")),
+        gemini_timeout_s=float(pick_value("gemini_timeout_s")),
+        http_timeout_s=float(pick_value("http_timeout_s")),
+        jitter_min_s=float(pick_value("jitter_min_s")),
+        jitter_max_s=float(pick_value("jitter_max_s")),
+        http_concurrency=int(pick_value("http_concurrency")),
+        max_products_per_source=int(pick_value("max_products_per_source")),
+        page_text_max_chars=int(pick_value("page_text_max_chars")),
+        batch_page_text_max_chars=int(pick_value("batch_page_text_max_chars")),
+        log_json_max_chars=int(pick_value("log_json_max_chars")),
+        fetch_only=bool(pick_value("fetch_only")),
+        skip_gemini=bool(pick_value("skip_gemini")),
+        save_prompt=bool(pick_value("save_prompt")),
+        save_pretty_products_json=bool(pick_value("save_pretty_products_json")),
+        save_raw_products_json=bool(pick_value("save_raw_products_json")),
+        save_report=bool(pick_value("save_report")),
+        roasters_path=pick_path("roasters_path"),
+        denylist_path=pick_path("denylist_path"),
+        reports_dir=pick_path("reports_dir"),
+        log_path=pick_path("log_path"),
+        log_level=str(pick_value("log_level")),
+        language=str(pick_value("language")),
+    )
 
 
 def normalize_base_url(url: str) -> str:
@@ -531,18 +638,14 @@ def parse_pagination(value: Any) -> Optional[PaginationConfig]:
 
 
 def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSource]:
-    env_json = os.getenv("COFFEEWATCH_ROASTERS_JSON", "").strip()
     data: list[dict[str, Any]] = []
-    if env_json:
-        try:
-            data = json.loads(env_json)
-        except json.JSONDecodeError as exc:
-            logger.error("Invalid COFFEEWATCH_ROASTERS_JSON: %s", exc)
-    elif settings.roasters_path.exists():
+    if settings.roasters_path.exists():
         try:
             data = json.loads(settings.roasters_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             logger.error("Invalid roasters file %s: %s", settings.roasters_path, exc)
+    else:
+        logger.warning("Roasters file not found: %s", settings.roasters_path)
 
     if not data:
         return [
@@ -1165,6 +1268,8 @@ def build_prompt(
         "peer reputation. Use clear evidence from the page text or grounded sources.\n"
         "If evidence is thin or ambiguous, set worth_trying=false and explain the uncertainty.\n"
         "Use the sanitized product page text and Google Search grounding.\n"
+        "Elaborate on the reasons for your recommendation.\n"
+        "It is OK to recommend nothing if nothing stands out; say so explicitly.\n"
         f"{language_instruction(language)}\n\n"
         f"Coffee: {coffee_name}\n"
         f"Roaster: {roaster_name}\n"
@@ -1191,7 +1296,10 @@ def build_batch_prompt(
         "experimental processing (e.g., anaerobic, thermal shock), unusually high cupping "
         "scores, or strong peer reputation. Use clear evidence from the page text or "
         "grounded sources.\n"
-        "Think carefully and generate a markdown recommendation report.\n"
+        "Think carefully and generate a coherent, complete markdown recommendation report.\n"
+        "You are free to choose your own structure; avoid empty placeholder sections.\n"
+        "Elaborate on the reasons for each recommendation.\n"
+        "It is OK to recommend nothing if nothing stands out; say so explicitly.\n"
         f"{language_instruction(language)}\n\n"
         "Products:\n"
     )
@@ -1207,15 +1315,11 @@ def build_batch_prompt(
             page_text_by_id.get(product.product_id, ""), max_chars
         )
         description_block = (
-            f"  description (from body_html):\n  {body_text}"
-            if body_text
-            else "  description (from body_html): (none available)"
+            f"  description:\n  {body_text}" if body_text else "  description: (none available)"
         )
         page_text_block = ""
         if page_text and page_text != body_text:
-            page_text_block = (
-                f"  page text (sanitized):\n  {page_text}"
-            )
+            page_text_block = f"  page text:\n  {page_text}"
         sections.append(
             "\n".join(
                 [
@@ -1266,6 +1370,12 @@ async def count_tokens_async(client: genai.Client, **kwargs: Any) -> Any:
     return await asyncio.to_thread(client.models.count_tokens, **kwargs)
 
 
+async def await_with_timeout(coro: Any, timeout_s: float) -> Any:
+    if timeout_s and timeout_s > 0:
+        return await asyncio.wait_for(coro, timeout=timeout_s)
+    return await coro
+
+
 def extract_total_tokens(count_response: Any) -> Optional[int]:
     if count_response is None:
         return None
@@ -1294,15 +1404,18 @@ def extract_total_tokens(count_response: Any) -> Optional[int]:
 
 
 def extract_usage_metadata(response: Any) -> Optional[dict[str, int]]:
-    usage = getattr(response, "usage_metadata", None) or getattr(
-        response, "usageMetadata", None
-    )
+    if response is None:
+        return None
+    if isinstance(response, dict):
+        usage = response.get("usage_metadata") or response.get("usageMetadata")
+    else:
+        usage = getattr(response, "usage_metadata", None) or getattr(
+            response, "usageMetadata", None
+        )
     if usage is None:
         return None
     if isinstance(usage, dict):
-        prompt_tokens = usage.get("prompt_token_count") or usage.get(
-            "promptTokenCount"
-        )
+        prompt_tokens = usage.get("prompt_token_count") or usage.get("promptTokenCount")
         output_tokens = usage.get("candidates_token_count") or usage.get(
             "candidatesTokenCount"
         )
@@ -1330,12 +1443,72 @@ def extract_usage_metadata(response: Any) -> Optional[dict[str, int]]:
     return {k: v for k, v in data.items() if isinstance(v, int)} or None
 
 
+def extract_candidate(response: Any) -> Any:
+    if response is None:
+        return None
+    if isinstance(response, dict):
+        candidates = response.get("candidates") or []
+        return candidates[0] if candidates else None
+    candidates = getattr(response, "candidates", None)
+    if not candidates:
+        return None
+    return candidates[0]
+
+
+def extract_parts_text(parts: Any) -> list[str]:
+    if not parts:
+        return []
+    chunks: list[str] = []
+    for part in parts:
+        if isinstance(part, dict):
+            value = part.get("text")
+        else:
+            value = getattr(part, "text", None)
+        if isinstance(value, str) and value.strip():
+            chunks.append(value.strip())
+    return chunks
+
+
+def extract_response_text(response: Any) -> str:
+    if response is None:
+        return ""
+    if isinstance(response, dict):
+        text = str(response.get("text") or "").strip()
+    else:
+        text = (getattr(response, "text", None) or "").strip()
+    if text:
+        return text
+    candidate = extract_candidate(response)
+    if candidate is None:
+        return ""
+    if isinstance(candidate, dict):
+        if isinstance(candidate.get("text"), str):
+            return candidate["text"].strip()
+        content = candidate.get("content") or {}
+        parts = content.get("parts") or []
+        chunks = extract_parts_text(parts)
+        return "\n".join(chunks).strip()
+    if isinstance(getattr(candidate, "text", None), str):
+        return getattr(candidate, "text", "").strip()
+    content = getattr(candidate, "content", None)
+    parts = getattr(content, "parts", None) if content else None
+    chunks = extract_parts_text(parts)
+    return "\n".join(chunks).strip()
+
+
 def extract_grounding_metadata(response: Any) -> Optional[dict[str, Any]]:
     try:
-        candidate = response.candidates[0]
+        candidate = extract_candidate(response)
+        if candidate is None:
+            return None
         metadata = getattr(candidate, "grounding_metadata", None) or getattr(
             candidate, "groundingMetadata", None
         )
+        if metadata is None:
+            if isinstance(candidate, dict):
+                metadata = candidate.get("groundingMetadata") or candidate.get(
+                    "grounding_metadata"
+                )
         if metadata is None:
             return None
 
@@ -1426,35 +1599,52 @@ async def evaluate_roaster_markdown(
     roaster_name: str,
     prompt: str,
     logger: logging.Logger,
+    timeout_s: float,
 ) -> tuple[Optional[str], Optional[dict[str, Any]]]:
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(
         tools=[grounding_tool],
         response_mime_type="text/plain",
         temperature=0.2,
-        max_output_tokens=2048,
     )
 
     input_tokens: Optional[int] = None
     try:
-        count_response = await count_tokens_async(
-            client,
-            model=model,
-            contents=prompt,
+        count_response = await await_with_timeout(
+            count_tokens_async(
+                client,
+                model=model,
+                contents=prompt,
+            ),
+            timeout_s,
         )
         input_tokens = extract_total_tokens(count_response)
         if input_tokens is not None:
             logger.info("Gemini input tokens for %s: %d", roaster_name, input_tokens)
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Gemini input token count timed out for %s after %.1fs",
+            roaster_name,
+            timeout_s,
+        )
     except Exception as exc:
         logger.warning("Gemini input token count failed for %s: %s", roaster_name, exc)
 
     try:
-        response = await generate_content_async(
-            client,
-            model=model,
-            contents=prompt,
-            config=config,
+        response = await await_with_timeout(
+            generate_content_async(
+                client,
+                model=model,
+                contents=prompt,
+                config=config,
+            ),
+            timeout_s,
         )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Gemini request timed out for %s after %.1fs", roaster_name, timeout_s
+        )
+        return None, None
     except Exception as exc:
         logger.exception("Gemini request failed for %s: %s", roaster_name, exc)
         return None, None
@@ -1471,16 +1661,25 @@ async def evaluate_roaster_markdown(
         )
     elif text:
         try:
-            count_response = await count_tokens_async(
-                client,
-                model=model,
-                contents=text,
+            count_response = await await_with_timeout(
+                count_tokens_async(
+                    client,
+                    model=model,
+                    contents=text,
+                ),
+                timeout_s,
             )
             output_tokens = extract_total_tokens(count_response)
             if output_tokens is not None:
                 logger.info(
                     "Gemini output tokens for %s: %d", roaster_name, output_tokens
                 )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Gemini output token count timed out for %s after %.1fs",
+                roaster_name,
+                timeout_s,
+            )
         except Exception as exc:
             logger.warning(
                 "Gemini output token count failed for %s: %s", roaster_name, exc
@@ -1583,8 +1782,160 @@ def append_report_entry(
         handle.write("\n".join(lines))
 
 
-async def run() -> int:
-    settings = Settings.from_env()
+async def process_roaster(
+    roaster: RoasterSource,
+    http_client: httpx.AsyncClient,
+    settings: Settings,
+    robots_cache: dict[str, RobotFileParser],
+    run_id: str,
+    http_semaphore: asyncio.Semaphore,
+    logger: logging.Logger,
+    api_key: Optional[str],
+    language: str,
+    denylist: set[str],
+) -> None:
+    base_url = normalize_base_url(roaster.base_url)
+    domain = urlsplit(base_url).netloc.lower()
+    if domain and domain in denylist:
+        logger.info("Skipping denylisted domain %s", domain)
+        return
+
+    products = await fetch_products_for_roaster(
+        http_client,
+        roaster,
+        settings,
+        robots_cache,
+        settings.reports_dir,
+        run_id,
+        http_semaphore,
+        logger,
+    )
+    if not products:
+        logger.info("No products parsed for %s", roaster.name)
+        return
+
+    new_products = list(products)
+    logger.info(
+        "Found %d products for %s (%d to evaluate).",
+        len(products),
+        roaster.name,
+        len(new_products),
+    )
+
+    if settings.fetch_only:
+        logger.info(
+            "Fetch-only mode enabled; skipping product page fetches and Gemini."
+        )
+        if settings.save_report:
+            report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
+            init_report(report_path, roaster.name, run_id)
+            with report_path.open("a", encoding="utf-8") as handle:
+                handle.write("\nFetch-only mode enabled; no LLM output.\n")
+                coffee_list = format_coffee_list(new_products)
+                if coffee_list:
+                    handle.write("\n")
+                    handle.write(coffee_list)
+        return
+
+    page_headers = merge_headers(
+        {"User-Agent": USER_AGENT},
+        roaster.product_page_headers,
+        logger,
+        f"{roaster.name} product page",
+    )
+    products_needing_pages = [product for product in new_products if not product.body_html]
+    page_text_by_id = {product.product_id: "" for product in new_products}
+    if products_needing_pages:
+        page_tasks = [
+            fetch_product_page_text(
+                http_client,
+                product,
+                settings,
+                robots_cache,
+                logger,
+                page_headers,
+                http_semaphore,
+            )
+            for product in products_needing_pages
+        ]
+        page_texts = await asyncio.gather(*page_tasks)
+        for product, text in zip(products_needing_pages, page_texts):
+            page_text_by_id[product.product_id] = text
+
+    prompt = build_batch_prompt(
+        roaster.name,
+        new_products,
+        page_text_by_id,
+        settings.batch_page_text_max_chars,
+        language,
+    )
+    if settings.save_prompt:
+        prompt_path = save_prompt_text(settings.reports_dir, run_id, roaster.name, prompt)
+        logger.info("Saved Gemini prompt for %s to %s", roaster.name, prompt_path)
+
+    if settings.skip_gemini:
+        logger.info("Gemini skipped by configuration.")
+        if settings.save_report:
+            report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
+            init_report(report_path, roaster.name, run_id)
+            with report_path.open("a", encoding="utf-8") as handle:
+                handle.write("\nGemini skipped by configuration.\n")
+                coffee_list = format_coffee_list(new_products)
+                if coffee_list:
+                    handle.write("\n")
+                    handle.write(coffee_list)
+        return
+
+    logger.info("Gemini prompt for %s:\n%s", roaster.name, prompt)
+    genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
+    markdown, grounding = await evaluate_roaster_markdown(
+        genai_client,
+        settings.model,
+        roaster.name,
+        prompt,
+        logger,
+        settings.gemini_timeout_s,
+    )
+    if markdown is None:
+        logger.warning("Gemini returned no text for %s", roaster.name)
+        if settings.save_report:
+            report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
+            init_report(report_path, roaster.name, run_id)
+            with report_path.open("a", encoding="utf-8") as handle:
+                handle.write("\nGemini returned no text for this roaster.\n")
+                grounding_block = format_grounding_metadata(grounding or {})
+                if grounding_block:
+                    handle.write("\n")
+                    handle.write(grounding_block)
+                coffee_list = format_coffee_list(new_products)
+                if coffee_list:
+                    handle.write("\n")
+                    handle.write(coffee_list)
+        return
+    if grounding:
+        logger.info(
+            "Gemini grounding metadata for %s: %s",
+            roaster.name,
+            json.dumps(grounding, ensure_ascii=True),
+        )
+
+    if settings.save_report:
+        report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
+        init_report(report_path, roaster.name, run_id)
+        with report_path.open("a", encoding="utf-8") as handle:
+            handle.write(markdown)
+            handle.write("\n")
+            grounding_block = format_grounding_metadata(grounding or {})
+            if grounding_block:
+                handle.write("\n")
+                handle.write(grounding_block)
+            coffee_list = format_coffee_list(new_products)
+            if coffee_list:
+                handle.write("\n")
+                handle.write(coffee_list)
+
+
+async def run(settings: Settings) -> int:
     setup_logging(settings.log_level)
     settings.log_path.parent.mkdir(parents=True, exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
@@ -1596,11 +1947,9 @@ async def run() -> int:
     logging.getLogger().addHandler(file_handler)
     logger = logging.getLogger("coffee_watch")
 
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        logger.warning(
-            "No GEMINI_API_KEY/GOOGLE_API_KEY found; relying on default SDK auth."
-        )
+        logger.warning("No GEMINI_API_KEY found; relying on default SDK auth.")
 
     roasters = load_roasters(settings, logger)
     if not roasters:
@@ -1626,139 +1975,22 @@ async def run() -> int:
         follow_redirects=True,
         timeout=timeout,
     ) as http_client:
-        genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
-        for roaster in roasters:
-            base_url = normalize_base_url(roaster.base_url)
-            domain = urlsplit(base_url).netloc.lower()
-            if domain and domain in denylist:
-                logger.info("Skipping denylisted domain %s", domain)
-                continue
-
-            products = await fetch_products_for_roaster(
-                http_client,
+        tasks = [
+            process_roaster(
                 roaster,
+                http_client,
                 settings,
                 robots_cache,
-                settings.reports_dir,
                 run_id,
                 http_semaphore,
                 logger,
-            )
-            if not products:
-                logger.info("No products parsed for %s", roaster.name)
-                continue
-
-            new_products = list(products)
-            logger.info(
-                "Found %d products for %s (%d to evaluate).",
-                len(products),
-                roaster.name,
-                len(new_products),
-            )
-
-            if settings.fetch_only:
-                logger.info(
-                    "Fetch-only mode enabled; skipping product page fetches and Gemini."
-                )
-                if settings.save_report:
-                    report_path = make_report_path(
-                        settings.reports_dir, roaster.name, run_id
-                    )
-                    init_report(report_path, roaster.name, run_id)
-                    with report_path.open("a", encoding="utf-8") as handle:
-                        handle.write("\nFetch-only mode enabled; no LLM output.\n")
-                        coffee_list = format_coffee_list(new_products)
-                        if coffee_list:
-                            handle.write("\n")
-                            handle.write(coffee_list)
-                continue
-
-            page_headers = merge_headers(
-                {"User-Agent": USER_AGENT},
-                roaster.product_page_headers,
-                logger,
-                f"{roaster.name} product page",
-            )
-            products_needing_pages = [
-                product for product in new_products if not product.body_html
-            ]
-            page_text_by_id = {product.product_id: "" for product in new_products}
-            if products_needing_pages:
-                page_tasks = [
-                    fetch_product_page_text(
-                        http_client,
-                        product,
-                        settings,
-                        robots_cache,
-                        logger,
-                        page_headers,
-                        http_semaphore,
-                    )
-                    for product in products_needing_pages
-                ]
-                page_texts = await asyncio.gather(*page_tasks)
-                for product, text in zip(products_needing_pages, page_texts):
-                    page_text_by_id[product.product_id] = text
-
-            prompt = build_batch_prompt(
-                roaster.name,
-                new_products,
-                page_text_by_id,
-                settings.batch_page_text_max_chars,
+                api_key,
                 language,
+                denylist,
             )
-            if settings.save_prompt:
-                prompt_path = save_prompt_text(
-                    settings.reports_dir, run_id, roaster.name, prompt
-                )
-                logger.info("Saved Gemini prompt for %s to %s", roaster.name, prompt_path)
-
-            if settings.skip_gemini:
-                logger.info("Gemini skipped by configuration.")
-                if settings.save_report:
-                    report_path = make_report_path(
-                        settings.reports_dir, roaster.name, run_id
-                    )
-                    init_report(report_path, roaster.name, run_id)
-                    with report_path.open("a", encoding="utf-8") as handle:
-                        handle.write("\nGemini skipped by configuration.\n")
-                        coffee_list = format_coffee_list(new_products)
-                        if coffee_list:
-                            handle.write("\n")
-                            handle.write(coffee_list)
-                continue
-
-            logger.info("Gemini prompt for %s:\n%s", roaster.name, prompt)
-            markdown, grounding = await evaluate_roaster_markdown(
-                genai_client,
-                settings.model,
-                roaster.name,
-                prompt,
-                logger,
-            )
-            if markdown is None:
-                continue
-            if grounding:
-                logger.info(
-                    "Gemini grounding metadata for %s: %s",
-                    roaster.name,
-                    json.dumps(grounding, ensure_ascii=True),
-                )
-
-            if settings.save_report:
-                report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
-                init_report(report_path, roaster.name, run_id)
-                with report_path.open("a", encoding="utf-8") as handle:
-                    handle.write(markdown)
-                    handle.write("\n")
-                    grounding_block = format_grounding_metadata(grounding or {})
-                    if grounding_block:
-                        handle.write("\n")
-                        handle.write(grounding_block)
-                    coffee_list = format_coffee_list(new_products)
-                    if coffee_list:
-                        handle.write("\n")
-                        handle.write(coffee_list)
+            for roaster in roasters
+        ]
+        await asyncio.gather(*tasks)
 
     logger.info("Run complete.")
     return 0
@@ -1766,7 +1998,10 @@ async def run() -> int:
 
 def main() -> None:
     try:
-        exit_code = asyncio.run(run())
+        args = parse_args()
+        config = load_config_file(args.config)
+        settings = build_settings(args, config)
+        exit_code = asyncio.run(run(settings))
     except KeyboardInterrupt:
         exit_code = 130
     sys.exit(exit_code)

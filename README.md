@@ -25,13 +25,56 @@ export GEMINI_API_KEY=your_key_here
 python main.py
 ```
 
-### Optional environment variables
-- `COFFEEWATCH_LANGUAGE` = `en` (default) or `zh` for 简体中文 output
-- `COFFEEWATCH_MODEL` (default: `gemini-3-pro-preview`)
-- `COFFEEWATCH_HTTP_CONCURRENCY` (default: `4`)
-- `COFFEEWATCH_SKIP_GEMINI=true` to only build prompts
-- `COFFEEWATCH_FETCH_ONLY=true` to only fetch products
-- `COFFEEWATCH_REPORTS_DIR`, `COFFEEWATCH_LOG_PATH` for paths
+### CLI usage
+Run with defaults:
+```bash
+python main.py
+```
+
+Override on the CLI:
+```bash
+python main.py --language zh --http-concurrency 4 --skip-gemini
+python main.py --gemini-timeout-s 600
+```
+
+### Config file overrides
+Pass a JSON config file and override selectively with CLI flags. CLI > config > defaults.
+```bash
+python main.py --config config/settings.json --language en
+```
+
+Example `config/settings.json`:
+```json
+{
+  "language": "zh",
+  "model": "gemini-3-pro-preview",
+  "gemini_timeout_s": 600.0,
+  "http_concurrency": 4,
+  "http_timeout_s": 20.0,
+  "jitter_min_s": 0.7,
+  "jitter_max_s": 2.0,
+  "max_products_per_source": 200,
+  "page_text_max_chars": 0,
+  "batch_page_text_max_chars": 0,
+  "log_json_max_chars": 0,
+  "fetch_only": false,
+  "skip_gemini": false,
+  "save_prompt": true,
+  "save_pretty_products_json": true,
+  "save_raw_products_json": false,
+  "save_report": true,
+  "roasters_path": "config/roasters.json",
+  "denylist_path": "config/denylist.txt",
+  "reports_dir": "reports",
+  "log_path": "logs/coffee_watch.log",
+  "log_level": "INFO"
+}
+```
+
+Notes:
+- Only `GEMINI_API_KEY` is read from the environment.
+- Descriptions are extracted from product `body_html` (when available).
+- `gemini_timeout_s` controls Gemini request timeouts in seconds (0 = no timeout).
 
 ## Configuration
 - `config/roasters.json` controls sources, endpoints, and per-roaster settings.
