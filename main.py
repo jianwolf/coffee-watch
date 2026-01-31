@@ -1364,6 +1364,45 @@ def build_batch_prompt(
     return "\n".join(sections)
 
 
+def build_digest_prompt(
+    reports: list[tuple[str, str]],
+    language: str,
+) -> str:
+    header = (
+        "You are given markdown reports for multiple coffee roasters.\n"
+        "Write a concise digest that synthesizes the key recommendations across all reports.\n"
+        "Include: overall summary, standout coffees and why, any roasters with no strong picks, "
+        "and final overall recommendations.\n"
+        "Only use the information provided in the reports; do not introduce new coffees.\n"
+        f"{language_instruction(language)}\n\n"
+    )
+    sections = [header]
+    for name, text in reports:
+        sections.append(f"## Report: {name}\n\n{text}\n")
+    return "\n".join(sections)
+
+
+def select_reports_for_digest(report_paths: list[Path], limit: int) -> list[Path]:
+    if len(report_paths) <= limit:
+        return report_paths
+    return report_paths[:limit]
+
+
+def load_reports_for_digest(
+    report_paths: list[Path], logger: logging.Logger
+) -> list[tuple[str, str]]:
+    reports: list[tuple[str, str]] = []
+    for path in report_paths:
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            logger.warning("Failed to read report %s: %s", path, exc)
+            continue
+        if text:
+            reports.append((path.name, text))
+    return reports
+
+
 def model_json_schema(model_cls: type[BaseModel]) -> dict[str, Any]:
     if hasattr(model_cls, "model_json_schema"):
         return model_cls.model_json_schema()  # type: ignore[attr-defined]
@@ -1718,6 +1757,49 @@ async def evaluate_roaster_markdown(
     return None, extract_grounding_metadata(response)
 
 
+async def generate_digest_markdown(
+    client: genai.Client,
+    model: str,
+    prompt: str,
+    logger: logging.Logger,
+    timeout_s: float,
+) -> Optional[str]:
+    config = types.GenerateContentConfig(
+        response_mime_type="text/plain",
+        temperature=0.2,
+    )
+    try:
+        response = await await_with_timeout(
+            generate_content_async(
+                client,
+                model=model,
+                contents=prompt,
+                config=config,
+            ),
+            timeout_s,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Gemini digest request timed out after %.1fs", timeout_s)
+        return None
+    except Exception as exc:
+        logger.exception("Gemini digest request failed: %s", exc)
+        return None
+
+    text = extract_response_text(response).strip()
+    usage = extract_usage_metadata(response)
+    if usage:
+        logger.info(
+            "Gemini digest usage: prompt_tokens=%s output_tokens=%s total_tokens=%s",
+            usage.get("prompt_token_count"),
+            usage.get("candidates_token_count"),
+            usage.get("total_token_count"),
+        )
+    if text:
+        logger.info("Gemini digest raw response: %s", text)
+        return text
+    return None
+
+
 def record_evaluation(
     path: Path,
     product: ProductCandidate,
@@ -1821,12 +1903,12 @@ async def process_roaster(
     api_key: Optional[str],
     language: str,
     denylist: set[str],
-) -> None:
+) -> Optional[Path]:
     base_url = normalize_base_url(roaster.base_url)
     domain = urlsplit(base_url).netloc.lower()
     if domain and domain in denylist:
         logger.info("Skipping denylisted domain %s", domain)
-        return
+        return None
 
     products = await fetch_products_for_roaster(
         http_client,
@@ -1840,7 +1922,7 @@ async def process_roaster(
     )
     if not products:
         logger.info("No products parsed for %s", roaster.name)
-        return
+        return None
 
     new_products = list(products)
     logger.info(
@@ -1863,7 +1945,8 @@ async def process_roaster(
                 if coffee_list:
                     handle.write("\n")
                     handle.write(coffee_list)
-        return
+            return report_path
+        return None
 
     page_headers = merge_headers(
         {"User-Agent": USER_AGENT},
@@ -1912,7 +1995,8 @@ async def process_roaster(
                 if coffee_list:
                     handle.write("\n")
                     handle.write(coffee_list)
-        return
+            return report_path
+        return None
 
     logger.info("Gemini prompt for %s:\n%s", roaster.name, prompt)
     genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
@@ -1939,7 +2023,8 @@ async def process_roaster(
                 if coffee_list:
                     handle.write("\n")
                     handle.write(coffee_list)
-        return
+            return report_path
+        return None
     if grounding:
         logger.info(
             "Gemini grounding metadata for %s: %s",
@@ -1961,7 +2046,8 @@ async def process_roaster(
             if coffee_list:
                 handle.write("\n")
                 handle.write(coffee_list)
-
+        return report_path
+    return None
 
 async def run(settings: Settings) -> int:
     setup_logging(settings.log_level)
@@ -2020,7 +2106,35 @@ async def run(settings: Settings) -> int:
             )
             for roaster in roasters
         ]
-        await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+
+    report_paths = [path for path in results if path]
+    if settings.save_report and report_paths:
+        selected_paths = select_reports_for_digest(report_paths, 5)
+        if len(selected_paths) < 5:
+            logger.info(
+                "Digest will use %d report(s); fewer than 5 available.",
+                len(selected_paths),
+            )
+        reports = load_reports_for_digest(selected_paths, logger)
+        if reports:
+            digest_prompt = build_digest_prompt(reports, language)
+            genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
+            digest = await generate_digest_markdown(
+                genai_client,
+                settings.model,
+                digest_prompt,
+                logger,
+                settings.gemini_timeout_s,
+            )
+            if digest:
+                digest_path = report_file_path(
+                    settings.reports_dir, "digest", run_id, None, "md"
+                )
+                digest_path.write_text(digest, encoding="utf-8")
+                logger.info("Saved digest report to %s", digest_path)
+            else:
+                logger.warning("Gemini returned no digest text.")
 
     logger.info("Run complete.")
     return 0
