@@ -45,4 +45,4 @@ python main.py
 This bot runs at low volume and obeys robots.txt. If you are a site owner and prefer not to be monitored, please open a GitHub Issue, and we will add your domain to our denylist immediately.
 
 ## License
-MIT (or replace with your preferred license).
+MIT
