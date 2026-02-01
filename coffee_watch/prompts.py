@@ -105,7 +105,10 @@ def build_digest_prompt(
 ) -> str:
     header = (
         "You are given markdown reports for multiple coffee roasters.\n"
-        "Write a concise digest that synthesizes the key recommendations across all reports.\n"
+        "Write a digest that synthesizes the key recommendations across all reports.\n"
+        "Include an accessible introduction for readers without a strong coffee background.\n"
+        "Provide detailed reasoning for each recommendation and explain unfamiliar terms.\n"
+        "Do not be afraid to be long if it improves clarity and usefulness.\n"
         "Include: overall summary, standout coffees and why, any roasters with no strong picks, "
         "and final overall recommendations.\n"
         "In the summary, explicitly list all roasters represented in the reports; "
@@ -127,7 +130,10 @@ def build_new_products_digest_prompt(
 ) -> str:
     header = (
         "You are given a list of newly discovered coffees across multiple roasters.\n"
-        "Write a concise digest of the best new coffees.\n"
+        "Write a digest of the best new coffees.\n"
+        "Include an accessible introduction for readers without a strong coffee background.\n"
+        "Provide detailed reasoning for each recommendation and explain unfamiliar terms.\n"
+        "Do not be afraid to be long if it improves clarity and usefulness.\n"
         "Include: overall summary, standout coffees and why, any roasters with no strong picks, "
         "and final overall recommendations.\n"
         "Only use the information provided below; do not introduce new coffees.\n"

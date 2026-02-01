@@ -106,7 +106,6 @@
     "products_path": "/shop",
     "products_type": "html",
     "products_parser": "wix_shop",
-    "jitter_multiplier": 2.0,
     "product_link_patterns": [
       "/product-page/"
     ],

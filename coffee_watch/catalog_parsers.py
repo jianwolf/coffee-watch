@@ -4,10 +4,10 @@ import hashlib
 import logging
 import re
 from typing import Callable
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from .models import ProductCandidate, RoasterSource
-from .text_utils import guess_name_from_url, sanitize_html_to_text
+from .text_utils import LinkParser, guess_name_from_url, sanitize_html_to_text
 from .url_utils import canonicalize_url
 
 CatalogParser = Callable[
@@ -71,29 +71,47 @@ def parse_wix_shop_catalog(
     max_count: int,
     logger: logging.Logger,
 ) -> list[ProductCandidate]:
-    matches = list(_WIX_URL_RE.finditer(html))
-    if not matches:
-        logger.info("Wix catalog parser found no product URLs for %s", roaster.name)
-        return []
+    parser = LinkParser()
+    parser.feed(html)
+    hrefs = [href for href, _ in parser.links if "/product-page/" in href]
+    urls: list[str] = []
+    seen_raw: set[str] = set()
+    for href in hrefs:
+        if href in seen_raw:
+            continue
+        seen_raw.add(href)
+        urls.append(canonicalize_url(urljoin(base_url, href)))
+
+    if not urls:
+        matches = list(_WIX_URL_RE.finditer(html))
+        if not matches:
+            logger.info("Wix catalog parser found no product URLs for %s", roaster.name)
+            return []
+        urls = [canonicalize_url(urljoin(base_url, match.group(1))) for match in matches]
 
     products: list[ProductCandidate] = []
     seen: set[str] = set()
     exclude_keywords = {kw.strip().lower() for kw in roaster.exclude_title_keywords if kw}
-    for match in matches:
-        rel_url = match.group(1)
-        url = canonicalize_url(urljoin(base_url, rel_url))
+    for url in urls:
         if url in seen:
             continue
         seen.add(url)
 
-        snippet_start = max(0, match.start() - 300)
-        snippet_end = min(len(html), match.end() + 800)
+        slug = urlsplit(url).path
+        snippet_index = html.find(slug)
+        if snippet_index == -1:
+            snippet_index = html.find(url)
+        if snippet_index == -1:
+            snippet_index = html.find(url.replace("&", "&amp;"))
+        snippet_start = max(0, snippet_index - 300) if snippet_index != -1 else 0
+        snippet_end = min(
+            len(html),
+            snippet_index + 800 if snippet_index != -1 else min(len(html), 1200),
+        )
         snippet = html[snippet_start:snippet_end]
         title = _extract_title(snippet, url)
         badge = _extract_badge(snippet)
-        price = _extract_price(snippet[match.end() - snippet_start :])
-        if not price:
-            price = _extract_price(snippet)
+        price = _extract_price(snippet)
 
         title_lower = title.lower()
         url_lower = url.lower()

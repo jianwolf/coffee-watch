@@ -51,6 +51,7 @@ Override on the CLI:
 python main.py --language zh --http-concurrency 1 --skip-gemini
 python main.py --gemini-timeout-s 600
 python main.py --cache-max-age-s 0  # always revalidate
+python main.py --digest-only        # generate digest from existing reports only
 ```
 
 ### Testing
@@ -73,8 +74,8 @@ Example `config/settings.json`:
   "gemini_timeout_s": 600.0,
   "http_concurrency": 1,
   "http_timeout_s": 20.0,
-  "jitter_min_s": 1.5,
-  "jitter_max_s": 3.0,
+  "jitter_min_s": 0.7,
+  "jitter_max_s": 2.0,
   "max_products_per_source": 200,
   "page_text_max_chars": 0,
   "batch_page_text_max_chars": 0,

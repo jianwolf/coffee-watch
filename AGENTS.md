@@ -16,6 +16,7 @@
 - `pip install -r requirements.txt` — install dependencies.
 - `python main.py` — run the monitor with defaults.
 - `python main.py --help` — view CLI flags.
+- `python main.py --digest-only` — generate digest from existing reports only.
 - `python main.py --config config/settings.json --language en` — run with config overrides.
 
 ## Coding Style & Naming Conventions

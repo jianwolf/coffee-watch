@@ -304,6 +304,51 @@ async def run(settings: Settings) -> int:
     run_id = run_date
     timeout = httpx.Timeout(settings.http_timeout_s)
     http_semaphore = asyncio.Semaphore(max(1, settings.http_concurrency))
+
+    if settings.digest_only:
+        report_paths = [
+            path
+            for path in settings.reports_dir.glob("*.md")
+            if "-digest.md" not in path.name
+        ]
+        if not report_paths:
+            logger.warning("Digest-only mode: no reports found in %s", settings.reports_dir)
+            return 0
+        reports = load_reports_for_digest(report_paths, logger)
+        if not reports:
+            logger.warning("Digest-only mode: no readable reports found.")
+            return 0
+        digest_prompt = build_digest_prompt(reports, language)
+        digest_prompt_path = save_prompt_text(assets_dir, run_id, "digest", digest_prompt)
+        logger.info("Saved Gemini digest prompt to %s", digest_prompt_path)
+        if settings.save_prompt:
+            digest_prompt_report_path = save_prompt_text(
+                settings.reports_dir, run_id, "digest", digest_prompt
+            )
+            logger.info(
+                "Saved Gemini digest prompt copy to %s", digest_prompt_report_path
+            )
+        if settings.skip_gemini:
+            logger.info("Digest-only mode: Gemini skipped by configuration.")
+            return 0
+        genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
+        digest = await generate_digest_markdown(
+            genai_client,
+            settings.model,
+            digest_prompt,
+            logger,
+            settings.gemini_timeout_s,
+        )
+        if digest and settings.save_report:
+            digest_path = report_file_path(
+                settings.reports_dir, "digest", run_id, None, "md"
+            )
+            digest_path.write_text(digest, encoding="utf-8")
+            logger.info("Saved digest report to %s", digest_path)
+        elif not digest:
+            logger.warning("Gemini returned no digest text.")
+        logger.info("Run complete.")
+        return 0
     page_cache = PageCache(settings.cache_db_path, logger)
     try:
         async with httpx.AsyncClient(

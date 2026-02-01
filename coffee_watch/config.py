@@ -22,6 +22,7 @@ class Settings:
     log_json_max_chars: int
     fetch_only: bool
     skip_gemini: bool
+    digest_only: bool
     save_prompt: bool
     save_pretty_products_json: bool
     save_raw_products_json: bool
@@ -41,8 +42,8 @@ class Settings:
             model="gemini-3-pro-preview",
             gemini_timeout_s=600.0,
             http_timeout_s=20.0,
-            jitter_min_s=1.5,
-            jitter_max_s=3.0,
+            jitter_min_s=0.7,
+            jitter_max_s=2.0,
             http_concurrency=1,
             max_products_per_source=200,
             page_text_max_chars=0,
@@ -50,6 +51,7 @@ class Settings:
             log_json_max_chars=0,
             fetch_only=False,
             skip_gemini=False,
+            digest_only=False,
             save_prompt=False,
             save_pretty_products_json=False,
             save_raw_products_json=False,
@@ -114,6 +116,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     add_bool_flag(parser, "fetch-only", "fetch only (no Gemini calls)", None)
     add_bool_flag(parser, "skip-gemini", "skip Gemini calls", None)
+    add_bool_flag(parser, "digest-only", "generate digest only (no scraping)", None)
     add_bool_flag(parser, "save-prompt", "save Gemini prompt files", None)
     add_bool_flag(
         parser, "save-pretty-products-json", "save pretty products JSON", None
@@ -182,6 +185,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         log_json_max_chars=int(pick_value("log_json_max_chars")),
         fetch_only=bool(pick_value("fetch_only")),
         skip_gemini=bool(pick_value("skip_gemini")),
+        digest_only=bool(pick_value("digest_only")),
         save_prompt=bool(pick_value("save_prompt")),
         save_pretty_products_json=bool(pick_value("save_pretty_products_json")),
         save_raw_products_json=bool(pick_value("save_raw_products_json")),
