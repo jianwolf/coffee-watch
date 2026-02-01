@@ -65,12 +65,13 @@
   },
   {
     "name": "Passenger Coffee",
-    "base_url": "https://drinkpassenger.com",
+    "base_url": "https://passenger-coffee-and-tea.myshopify.com",
     "products_path": "/collections/coffee/products.json",
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "product_url_template": "https://drinkpassenger.com/products/{handle}"
   },
   {
     "name": "La Cabra",
