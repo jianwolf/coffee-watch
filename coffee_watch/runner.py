@@ -31,6 +31,7 @@ from .prompts import (
 )
 from .text_utils import sanitize_html_to_text, trim_text_at_phrases
 from .reporting import (
+    extract_coffee_list_items,
     init_report,
     load_reports_for_digest,
     make_report_path,
@@ -328,6 +329,28 @@ async def run(settings: Settings) -> int:
             logger.info(
                 "Saved Gemini digest prompt copy to %s", digest_prompt_report_path
             )
+        new_items = extract_coffee_list_items(reports, logger)
+        new_digest_prompt = ""
+        if new_items:
+            new_digest_prompt = build_new_products_digest_prompt(
+                new_items,
+                settings.batch_page_text_max_chars,
+                language,
+            )
+            new_digest_prompt_path = save_prompt_text(
+                assets_dir, run_id, "new-digest", new_digest_prompt
+            )
+            logger.info(
+                "Saved Gemini new-products digest prompt to %s", new_digest_prompt_path
+            )
+            if settings.save_prompt:
+                new_digest_prompt_report_path = save_prompt_text(
+                    settings.reports_dir, run_id, "new-digest", new_digest_prompt
+                )
+                logger.info(
+                    "Saved Gemini new-products digest prompt copy to %s",
+                    new_digest_prompt_report_path,
+                )
         if settings.skip_gemini:
             logger.info("Digest-only mode: Gemini skipped by configuration.")
             return 0
@@ -347,6 +370,22 @@ async def run(settings: Settings) -> int:
             logger.info("Saved digest report to %s", digest_path)
         elif not digest:
             logger.warning("Gemini returned no digest text.")
+        if new_digest_prompt:
+            new_digest = await generate_digest_markdown(
+                genai_client,
+                settings.model,
+                new_digest_prompt,
+                logger,
+                settings.gemini_timeout_s,
+            )
+            if new_digest and settings.save_report:
+                new_digest_path = report_file_path(
+                    settings.reports_dir, "new-digest", run_id, None, "md"
+                )
+                new_digest_path.write_text(new_digest, encoding="utf-8")
+                logger.info("Saved new-products digest report to %s", new_digest_path)
+            elif not new_digest:
+                logger.warning("Gemini returned no new-products digest text.")
         logger.info("Run complete.")
         return 0
     page_cache = PageCache(settings.cache_db_path, logger)

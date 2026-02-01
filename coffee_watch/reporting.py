@@ -122,3 +122,55 @@ def load_reports_for_digest(
         if text:
             reports.append((path.name, text))
     return reports
+
+
+def extract_coffee_list_items(
+    reports: list[tuple[str, str]], logger: logging.Logger
+) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for report_name, text in reports:
+        roaster_name = ""
+        for line in text.splitlines():
+            if line.startswith("Roaster: "):
+                roaster_name = line.split("Roaster: ", 1)[1].strip()
+                break
+        if not roaster_name:
+            roaster_name = report_name
+
+        in_list = False
+        for line in text.splitlines():
+            if line.strip() == "## Coffee list":
+                in_list = True
+                continue
+            if not in_list:
+                continue
+            if line.startswith("## "):
+                break
+            entry = line.strip()
+            if not entry.startswith("- "):
+                continue
+            entry = entry[2:].strip()
+            if not entry:
+                continue
+            name = entry
+            url = ""
+            if entry.endswith(")") and " (" in entry:
+                maybe_name, maybe_url = entry.rsplit(" (", 1)
+                if maybe_url.startswith("http"):
+                    name = maybe_name.strip()
+                    url = maybe_url[:-1]
+            items.append(
+                {
+                    "roaster": roaster_name,
+                    "name": name,
+                    "url": url,
+                    "list_price": "",
+                    "badge": "",
+                    "description": "",
+                }
+            )
+    if not items:
+        logger.warning(
+            "No coffee list items found while building digest-only new-digest."
+        )
+    return items
