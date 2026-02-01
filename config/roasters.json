@@ -6,8 +6,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Prodigal Coffee",
@@ -16,8 +15,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "SEY Coffee",
@@ -26,8 +24,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Onyx Coffee Lab",
@@ -37,8 +34,7 @@
     "products_params": {
       "limit": "250"
     },
-    "enabled": true,
-    "max_products": 200
+    "enabled": true
   },
   {
     "name": "Black & White Roasters",
@@ -47,8 +43,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Hydrangea Coffee Roasters",
@@ -57,8 +52,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Flower Child Coffee",
@@ -67,8 +61,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Passenger Coffee",
@@ -77,8 +70,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "La Cabra",
@@ -87,8 +79,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Regalia Coffee",
@@ -97,8 +88,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Memli Coffee Lab",
@@ -124,8 +114,7 @@
       "gift card",
       "subscription",
       "workshop"
-    ],
-    "max_products": 200
+    ]
   },
   {
     "name": "Ilse Coffee",
@@ -134,8 +123,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Proud Mary Coffee",
@@ -144,8 +132,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Dayglow Coffee",
@@ -154,8 +141,7 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   },
   {
     "name": "Heart Roasters",
@@ -164,7 +150,6 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    },
-    "max_products": 200
+    }
   }
 ]
