@@ -26,6 +26,8 @@ class Settings:
     save_pretty_products_json: bool
     save_raw_products_json: bool
     save_report: bool
+    cache_db_path: Path
+    cache_max_age_s: float
     roasters_path: Path
     denylist_path: Path
     reports_dir: Path
@@ -39,9 +41,9 @@ class Settings:
             model="gemini-3-pro-preview",
             gemini_timeout_s=600.0,
             http_timeout_s=20.0,
-            jitter_min_s=0.7,
-            jitter_max_s=2.0,
-            http_concurrency=4,
+            jitter_min_s=1.5,
+            jitter_max_s=3.0,
+            http_concurrency=1,
             max_products_per_source=200,
             page_text_max_chars=0,
             batch_page_text_max_chars=0,
@@ -52,6 +54,8 @@ class Settings:
             save_pretty_products_json=False,
             save_raw_products_json=False,
             save_report=True,
+            cache_db_path=Path("logs/coffee_watch_cache.sqlite"),
+            cache_max_age_s=21600.0,
             roasters_path=Path("config/roasters.json"),
             denylist_path=Path("config/denylist.txt"),
             reports_dir=Path("reports"),
@@ -106,7 +110,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--log-json-max-chars",
         type=int,
-        help="Max chars when logging raw products JSON (0 = no limit)",
+        help="Max chars when logging products JSON snippets on errors (0 = disable)",
     )
     add_bool_flag(parser, "fetch-only", "fetch only (no Gemini calls)", None)
     add_bool_flag(parser, "skip-gemini", "skip Gemini calls", None)
@@ -116,6 +120,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     add_bool_flag(parser, "save-raw-products-json", "save raw products JSON", None)
     add_bool_flag(parser, "save-report", "save Gemini reports", None)
+    parser.add_argument("--cache-db-path", type=Path, help="Path to SQLite cache DB")
+    parser.add_argument(
+        "--cache-max-age-s",
+        type=float,
+        help="Max age (s) before re-fetching cached pages (0 = always revalidate)",
+    )
     parser.add_argument("--roasters-path", type=Path, help="Path to roasters JSON")
     parser.add_argument("--denylist-path", type=Path, help="Path to denylist file")
     parser.add_argument("--reports-dir", type=Path, help="Reports output directory")
@@ -176,6 +186,8 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         save_pretty_products_json=bool(pick_value("save_pretty_products_json")),
         save_raw_products_json=bool(pick_value("save_raw_products_json")),
         save_report=bool(pick_value("save_report")),
+        cache_db_path=pick_path("cache_db_path"),
+        cache_max_age_s=float(pick_value("cache_max_age_s")),
         roasters_path=pick_path("roasters_path"),
         denylist_path=pick_path("denylist_path"),
         reports_dir=pick_path("reports_dir"),

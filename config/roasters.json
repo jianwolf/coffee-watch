@@ -49,5 +49,123 @@
       "limit": "250"
     },
     "max_products": 200
+  },
+  {
+    "name": "Hydrangea Coffee Roasters",
+    "base_url": "https://hydrangea.coffee",
+    "products_path": "/collections/active/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
+  },
+  {
+    "name": "Flower Child Coffee",
+    "base_url": "https://flowerchildcoffee.com",
+    "products_path": "/collections/active-coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
+  },
+  {
+    "name": "Passenger Coffee",
+    "base_url": "https://drinkpassenger.com",
+    "products_path": "/collections/coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
+  },
+  {
+    "name": "La Cabra",
+    "base_url": "https://us.lacabra.com",
+    "products_path": "/collections/coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
+  },
+  {
+    "name": "Regalia Coffee",
+    "base_url": "https://regaliacoffee.com",
+    "products_path": "/collections/view-all/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
+  },
+  {
+    "name": "Memli Coffee Lab",
+    "base_url": "https://www.memlicoffee.com",
+    "products_path": "/shop",
+    "products_type": "html",
+    "products_parser": "wix_shop",
+    "jitter_multiplier": 2.0,
+    "product_link_patterns": [
+      "/product-page/"
+    ],
+    "page_text_stop_phrases": [
+      "Coffee You'd Like",
+      "CONTACT US",
+      "TERMS AND CONDITIONS",
+      "ALL RIGHTS RESERVED",
+      "bottom of page"
+    ],
+    "exclude_title_keywords": [
+      "tasting set",
+      "test roast",
+      "water",
+      "drip",
+      "gift card",
+      "subscription",
+      "workshop"
+    ],
+    "max_products": 200
+  },
+  {
+    "name": "Ilse Coffee",
+    "base_url": "https://ilsecoffee.com",
+    "products_path": "/collections/all-products/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
+  },
+  {
+    "name": "Proud Mary Coffee",
+    "base_url": "https://proudmarycoffee.com",
+    "products_path": "/collections/all-coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
+  },
+  {
+    "name": "Dayglow Coffee",
+    "base_url": "https://dayglow.coffee",
+    "products_path": "/collections/craft-coffee-1/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
+  },
+  {
+    "name": "Heart Roasters",
+    "base_url": "https://www.heartroasters.com",
+    "products_path": "/collections/beans/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "max_products": 200
   }
 ]

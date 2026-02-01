@@ -13,6 +13,8 @@ class RoasterSource:
     products_path: str = "/products.json"
     enabled: bool = True
     products_type: str = "auto"  # auto|json|html
+    products_parser: Optional[str] = None
+    jitter_multiplier: float = 1.0
     products_headers: dict[str, str] = field(default_factory=dict)
     products_params: dict[str, str] = field(default_factory=dict)
     product_page_headers: dict[str, str] = field(default_factory=dict)
@@ -23,6 +25,7 @@ class RoasterSource:
     product_fields: Optional["ProductFieldConfig"] = None
     pagination: Optional["PaginationConfig"] = None
     max_products: Optional[int] = None
+    page_text_stop_phrases: tuple[str, ...] = ()
     include_tags: tuple[str, ...] = ()
     exclude_tags: tuple[str, ...] = ()
     include_product_types: tuple[str, ...] = ()
@@ -43,6 +46,8 @@ class ProductCandidate:
     name: str
     url: str
     source: str
+    list_price: str = ""
+    list_badge: str = ""
     body_html: str = ""
     variants: tuple["VariantInfo", ...] = ()
 

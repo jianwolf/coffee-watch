@@ -178,6 +178,12 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
             products_path=str(entry.get("products_path", "/products.json")),
             enabled=bool(entry.get("enabled", True)),
             products_type=products_type,
+            products_parser=(
+                str(entry.get("products_parser")).strip()
+                if entry.get("products_parser") is not None
+                else None
+            ),
+            jitter_multiplier=float(entry.get("jitter_multiplier", 1.0)),
             products_headers=to_str_dict(entry.get("products_headers")),
             products_params=to_str_dict(entry.get("products_params")),
             product_page_headers=to_str_dict(entry.get("product_page_headers")),
@@ -199,6 +205,9 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
                 int(entry["max_products"])
                 if entry.get("max_products") is not None
                 else None
+            ),
+            page_text_stop_phrases=to_str_tuple(
+                entry.get("page_text_stop_phrases"), (), fallback_on_empty=False
             ),
             include_tags=to_str_tuple(
                 entry.get("include_tags"), (), fallback_on_empty=False
@@ -374,7 +383,22 @@ def parse_products_html(
     max_count: int,
     include_patterns: tuple[str, ...],
     exclude_patterns: tuple[str, ...],
+    exclude_title_keywords: tuple[str, ...],
 ) -> list[ProductCandidate]:
+    generic_link_tokens = {
+        "quick view",
+        "view",
+        "view product",
+        "view item",
+        "details",
+        "learn more",
+        "read more",
+        "shop",
+        "add to cart",
+        "buy now",
+        "new harvest",
+    }
+    excluded_keywords = normalize_tokens(exclude_title_keywords)
     parser = LinkParser()
     parser.feed(html)
     products: list[ProductCandidate] = []
@@ -387,13 +411,30 @@ def parse_products_html(
         if url in seen:
             continue
         seen.add(url)
-        name = text.strip() or guess_name_from_url(url)
+        link_text = " ".join(text.split()).strip()
+        link_text_lower = link_text.lower()
+        if not link_text or link_text_lower in generic_link_tokens or "quick view" in link_text_lower:
+            name = guess_name_from_url(url)
+        else:
+            name = link_text
+        if excluded_keywords:
+            name_lower = name.lower()
+            url_lower = url.lower()
+            if any(
+                keyword in name_lower
+                or keyword in url_lower
+                or keyword.replace(" ", "-") in url_lower
+                for keyword in excluded_keywords
+            ):
+                continue
         products.append(
             ProductCandidate(
                 product_id=product_id_from_url(url),
                 name=name,
                 url=url,
                 source=source,
+                list_price="",
+                list_badge="",
                 body_html="",
                 variants=(),
             )
@@ -430,6 +471,19 @@ def parse_products_response(
                 "Failed to parse JSON for %s; falling back to HTML.", roaster.name
             )
     text = content.decode("utf-8", errors="ignore")
+    if roaster.products_parser:
+        from .catalog_parsers import parse_catalog_html
+
+        parsed = parse_catalog_html(
+            roaster.products_parser,
+            text,
+            base_url,
+            roaster,
+            max_count,
+            logger,
+        )
+        if parsed:
+            return parsed
     return parse_products_html(
         text,
         base_url,
@@ -437,4 +491,5 @@ def parse_products_response(
         max_count,
         roaster.product_link_patterns,
         roaster.product_link_exclude_patterns,
+        roaster.exclude_title_keywords,
     )

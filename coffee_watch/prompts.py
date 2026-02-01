@@ -36,6 +36,8 @@ def sanitize_product_fields(product: ProductCandidate) -> dict[str, str]:
         "product_id": sanitize_prompt_field(product.product_id, 200),
         "name": sanitize_prompt_field(product.name, 200),
         "url": sanitize_prompt_field(product.url, 400),
+        "list_price": sanitize_prompt_field(product.list_price, 40),
+        "list_badge": sanitize_prompt_field(product.list_badge, 40),
     }
 
 
@@ -48,10 +50,9 @@ def build_batch_prompt(
 ) -> str:
     header = (
         f"You are evaluating coffees from {sanitize_prompt_field(roaster_name, 200)}. "
-        "Decide if each is worth trying.\n"
-        "These roasters are already high-end; only recommend coffees that are exceptional "
-        "even by specialty standards. Treat routine offerings as not worth trying unless "
-        "there is clear evidence of standout quality.\n"
+        "Your goal is to find the best coffees available right now.\n"
+        "Do not review every item; focus only on standout coffees and ignore routine "
+        "offerings unless there is clear evidence of exceptional quality.\n"
         "High-end signals: rare varieties (e.g., Geisha, Sudan Rume, SL28), exceptional "
         "producers or farms, competition lots, Cup of Excellence winners, limited microlots, "
         "experimental processing (e.g., anaerobic, thermal shock), unusually high cupping "
@@ -59,8 +60,9 @@ def build_batch_prompt(
         "grounded sources.\n"
         "Think carefully and generate a coherent, complete markdown recommendation report.\n"
         "You are free to choose your own structure; avoid empty placeholder sections.\n"
-        "Elaborate on the reasons for each recommendation.\n"
-        "It is OK to recommend nothing if nothing stands out; say so explicitly.\n"
+        "For each recommendation, explain why it is exceptional and cite the specific "
+        "signals from the provided text. It is OK to recommend nothing if nothing stands "
+        "out; say so explicitly.\n"
         f"{language_instruction(language)}\n\n"
         "Products:\n"
     )
@@ -76,25 +78,24 @@ def build_batch_prompt(
         page_text = sanitize_prompt_field(
             page_text_by_id.get(product.product_id, ""), max_chars
         )
+        description_text = page_text or body_text
         description_block = (
-            f"  description:\n  {body_text}" if body_text else "  description: (none available)"
+            f"  description:\n  {description_text}" if description_text else ""
         )
-        page_text_block = ""
-        if page_text and page_text != body_text:
-            page_text_block = f"  page text:\n  {page_text}"
-        sections.append(
-            "\n".join(
-                [
-                    f"- product_id: {fields['product_id']}",
-                    f"  name: {fields['name']}",
-                    f"  url: {fields['url']}",
-                    *format_variant_lines(product.variants),
-                    description_block,
-                    page_text_block,
-                    "",
-                ]
-            )
-        )
+        lines = [
+            f"- product_id: {fields['product_id']}",
+            f"  name: {fields['name']}",
+            f"  url: {fields['url']}",
+        ]
+        if fields["list_price"]:
+            lines.append(f"  list price: {fields['list_price']}")
+        if fields["list_badge"]:
+            lines.append(f"  badge: {fields['list_badge']}")
+        lines.extend(format_variant_lines(product.variants))
+        if description_block:
+            lines.append(description_block)
+        lines.append("")
+        sections.append("\n".join(lines))
     return "\n".join(sections)
 
 
@@ -107,10 +108,52 @@ def build_digest_prompt(
         "Write a concise digest that synthesizes the key recommendations across all reports.\n"
         "Include: overall summary, standout coffees and why, any roasters with no strong picks, "
         "and final overall recommendations.\n"
-        "Only use the information provided in the reports; do not introduce new coffees.\n"
+        "In the summary, explicitly list all roasters represented in the reports; "
+        "do not assume a fixed set.\n"
+        "Only use the information provided in the reports; do not introduce new coffees "
+        "or roasters.\n"
         f"{language_instruction(language)}\n\n"
     )
     sections = [header]
     for name, text in reports:
         sections.append(f"## Report: {name}\n\n{text}\n")
+    return "\n".join(sections)
+
+
+def build_new_products_digest_prompt(
+    items: list[dict[str, str]],
+    max_chars: int,
+    language: str,
+) -> str:
+    header = (
+        "You are given a list of newly discovered coffees across multiple roasters.\n"
+        "Write a concise digest of the best new coffees.\n"
+        "Include: overall summary, standout coffees and why, any roasters with no strong picks, "
+        "and final overall recommendations.\n"
+        "Only use the information provided below; do not introduce new coffees.\n"
+        f"{language_instruction(language)}\n\n"
+        "New coffees:\n"
+    )
+    sections: list[str] = [header]
+    for item in items:
+        roaster = sanitize_prompt_field(item.get("roaster", ""), 200)
+        name = sanitize_prompt_field(item.get("name", ""), 200)
+        url = sanitize_prompt_field(item.get("url", ""), 400)
+        list_price = sanitize_prompt_field(item.get("list_price", ""), 40)
+        badge = sanitize_prompt_field(item.get("badge", ""), 40)
+        description = sanitize_prompt_field(item.get("description", ""), max_chars)
+        lines = [
+            f"- roaster: {roaster}",
+            f"  name: {name}",
+            f"  url: {url}",
+        ]
+        if list_price:
+            lines.append(f"  list price: {list_price}")
+        if badge:
+            lines.append(f"  badge: {badge}")
+        if description:
+            lines.append("  description:")
+            lines.append(f"  {description}")
+        lines.append("")
+        sections.append("\n".join(lines))
     return "\n".join(sections)

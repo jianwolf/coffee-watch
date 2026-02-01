@@ -9,6 +9,7 @@
 - Configuration files are under `config/` (e.g., `config/roasters.json`, `config/denylist.txt`).
 - Generated artifacts go to `reports/` and `logs/` (both are local outputs).
 - Dependencies are listed in `requirements.txt`.
+- Caching lives in `coffee_watch/page_cache.py` (SQLite) and catalog parsing lives in `coffee_watch/catalog_parsers.py`.
 
 ## Build, Test, and Development Commands
 - `python -m venv .venv && source .venv/bin/activate` — create/activate a virtualenv.
@@ -20,7 +21,7 @@
 ## Coding Style & Naming Conventions
 - Python code uses 4-space indentation and type hints where helpful.
 - Keep functions small and single-purpose; prefer descriptive names (`fetch_products_for_roaster`, `build_batch_prompt`).
-- File naming: outputs use `YYYYMMDD-roaster-slug.md` and `YYYYMMDD-digest.md` (UTC date).
+- File naming: outputs use `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-digest.md`, and `YYYYMMDD-new-digest.md` (UTC date).
 - Avoid introducing non-ASCII text unless the file already uses it (e.g., prompt language strings).
 
 ## Testing Guidelines
@@ -37,3 +38,5 @@
 - Secrets are read from environment variables (e.g., `GEMINI_API_KEY`); never commit secrets.
 - The crawler respects `robots.txt` and uses a fixed User-Agent; keep these defaults intact.
 - Use `config/denylist.txt` to opt out specific domains.
+- Page caching uses `logs/coffee_watch_cache.sqlite`; `cache_max_age_s` controls revalidation.
+- Per-roaster throttling can be tuned via `jitter_multiplier` in `config/roasters.json`.
