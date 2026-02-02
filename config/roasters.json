@@ -6,7 +6,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Prodigal Coffee",
@@ -15,7 +16,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "SEY Coffee",
@@ -24,7 +26,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Onyx Coffee Lab",
@@ -34,7 +37,8 @@
     "products_params": {
       "limit": "250"
     },
-    "enabled": true
+    "enabled": true,
+    "platform": "shopify"
   },
   {
     "name": "Black & White Roasters",
@@ -43,7 +47,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Hydrangea Coffee Roasters",
@@ -52,7 +57,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Flower Child Coffee",
@@ -61,7 +67,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Passenger Coffee",
@@ -71,7 +78,8 @@
     "products_params": {
       "limit": "250"
     },
-    "product_url_template": "https://drinkpassenger.com/products/{handle}"
+    "product_url_template": "https://drinkpassenger.com/products/{handle}",
+    "platform": "shopify"
   },
   {
     "name": "La Cabra",
@@ -80,7 +88,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Regalia Coffee",
@@ -89,7 +98,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Memli Coffee Lab",
@@ -115,7 +125,8 @@
       "gift card",
       "subscription",
       "workshop"
-    ]
+    ],
+    "platform": "wix"
   },
   {
     "name": "Ilse Coffee",
@@ -124,7 +135,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Proud Mary Coffee",
@@ -133,7 +145,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Dayglow Coffee",
@@ -142,7 +155,8 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
   },
   {
     "name": "Heart Roasters",
@@ -151,6 +165,27 @@
     "products_type": "json",
     "products_params": {
       "limit": "250"
-    }
+    },
+    "platform": "shopify"
+  },
+  {
+    "name": "George Howell Coffee",
+    "base_url": "https://georgehowellcoffee.com",
+    "products_path": "/collections/all-coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "platform": "shopify"
+  },
+  {
+    "name": "Olympia Coffee",
+    "base_url": "https://www.olympiacoffee.com",
+    "products_path": "/collections/coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "platform": "shopify"
   }
 ]
