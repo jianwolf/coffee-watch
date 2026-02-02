@@ -235,6 +235,26 @@ def format_grounding_metadata(grounding: dict[str, Any]) -> str:
     )
 
 
+def log_grounding_queries(
+    logger,
+    request_name: str,
+    grounding: Optional[dict[str, Any]],
+) -> None:
+    queries: list[str] = []
+    if grounding:
+        raw_queries = grounding.get("webSearchQueries", [])
+        if isinstance(raw_queries, list):
+            queries = [str(item) for item in raw_queries if str(item)]
+    if queries:
+        logger.info(
+            "Gemini grounding queries for %s: %s",
+            request_name,
+            json.dumps(queries, ensure_ascii=True),
+        )
+    else:
+        logger.info("Gemini grounding queries for %s: none", request_name)
+
+
 async def evaluate_roaster_markdown(
     client: genai.Client,
     model: str,
@@ -292,6 +312,8 @@ async def evaluate_roaster_markdown(
         return None, None
 
     text = (getattr(response, "text", None) or "").strip()
+    grounding = extract_grounding_metadata(response)
+    log_grounding_queries(logger, roaster_name, grounding)
     usage = extract_usage_metadata(response)
     if usage:
         logger.info(
@@ -327,9 +349,8 @@ async def evaluate_roaster_markdown(
                 "Gemini output token count failed for %s: %s", roaster_name, exc
             )
     if text:
-        logger.info("Gemini raw response for %s: %s", roaster_name, text)
-        return text, extract_grounding_metadata(response)
-    return None, extract_grounding_metadata(response)
+        return text, grounding
+    return None, grounding
 
 
 async def generate_digest_markdown(
@@ -338,6 +359,7 @@ async def generate_digest_markdown(
     prompt: str,
     logger,
     timeout_s: float,
+    request_name: Optional[str] = None,
 ) -> Optional[str]:
     config = types.GenerateContentConfig(
         response_mime_type="text/plain",
@@ -361,6 +383,8 @@ async def generate_digest_markdown(
         return None
 
     text = extract_response_text(response).strip()
+    grounding = extract_grounding_metadata(response)
+    log_grounding_queries(logger, request_name or "digest", grounding)
     usage = extract_usage_metadata(response)
     if usage:
         logger.info(
@@ -370,6 +394,5 @@ async def generate_digest_markdown(
             usage.get("total_token_count"),
         )
     if text:
-        logger.info("Gemini digest raw response: %s", text)
         return text
     return None

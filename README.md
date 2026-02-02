@@ -18,7 +18,7 @@ A low-frequency monitoring agent that checks specialty coffee roasters for new r
 2. Fetch product lists and (optionally) product pages with robots.txt compliance.
 3. Use cached page text when available; otherwise fetch with conditional requests.
 4. Build a batch prompt from product metadata and sanitized page text.
-5. Generate a per-roaster report, a full digest, and a new-products digest.
+5. Generate a per-roaster report, a full digest, a new-products digest, and a roaster ratings digest.
 
 ## Code structure
 - `main.py` is the thin entrypoint that calls `coffee_watch/cli.py`.
@@ -100,7 +100,7 @@ Notes:
 - Only `GEMINI_API_KEY` is read from the environment.
 - Descriptions are extracted from product `body_html` (when available).
 - `gemini_timeout_s` controls Gemini request timeouts in seconds (0 = no timeout).
-- Reports are saved as `YYYYMMDD-roaster-slug.md` and `YYYYMMDD-digest.md` (UTC date).
+- Reports are saved as `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-digest.md`, and `YYYYMMDD-roaster-digest.md` (UTC date).
 - A new-products digest is saved as `YYYYMMDD-new-digest.md` when new coffees are detected.
 - Cached page text is stored in `logs/coffee_watch_cache.sqlite`.
 

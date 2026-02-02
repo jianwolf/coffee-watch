@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import logging.handlers
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -26,6 +26,7 @@ from .prompts import (
     build_batch_prompt,
     build_digest_prompt,
     build_new_products_digest_prompt,
+    build_roaster_ratings_digest_prompt,
     format_coffee_list,
     normalize_language,
 )
@@ -39,6 +40,89 @@ from .reporting import (
     save_prompt_text,
 )
 from .url_utils import normalize_base_url
+
+
+@dataclass(frozen=True)
+class DigestJob:
+    name: str
+    prompt: str
+
+
+def build_digest_jobs(
+    reports: list[tuple[str, str]],
+    new_items: list[dict[str, str]],
+    language: str,
+    max_chars: int,
+) -> list[DigestJob]:
+    jobs: list[DigestJob] = []
+    if reports:
+        jobs.append(DigestJob("digest", build_digest_prompt(reports, language)))
+        jobs.append(
+            DigestJob(
+                "roaster-digest",
+                build_roaster_ratings_digest_prompt(reports, language),
+            )
+        )
+    if new_items:
+        jobs.append(
+            DigestJob(
+                "new-digest",
+                build_new_products_digest_prompt(new_items, max_chars, language),
+            )
+        )
+    return jobs
+
+
+def save_digest_prompts(
+    jobs: list[DigestJob],
+    assets_dir: Path,
+    reports_dir: Path,
+    run_id: str,
+    save_prompt: bool,
+    logger: logging.Logger,
+) -> None:
+    for job in jobs:
+        prompt_path = save_prompt_text(assets_dir, run_id, job.name, job.prompt)
+        logger.info("Saved Gemini %s prompt to %s", job.name, prompt_path)
+        if save_prompt:
+            report_prompt_path = save_prompt_text(
+                reports_dir, run_id, job.name, job.prompt
+            )
+            logger.info(
+                "Saved Gemini %s prompt copy to %s", job.name, report_prompt_path
+            )
+
+
+async def generate_digest_reports(
+    jobs: list[DigestJob],
+    genai_client: genai.Client,
+    settings: Settings,
+    logger: logging.Logger,
+    run_id: str,
+) -> None:
+    if not jobs:
+        return
+    tasks = [
+        generate_digest_markdown(
+            genai_client,
+            settings.model,
+            job.prompt,
+            logger,
+            settings.gemini_timeout_s,
+            request_name=job.name,
+        )
+        for job in jobs
+    ]
+    results = await asyncio.gather(*tasks)
+    for job, digest in zip(jobs, results):
+        if digest and settings.save_report:
+            digest_path = report_file_path(
+                settings.reports_dir, job.name, run_id, None, "md"
+            )
+            digest_path.write_text(digest, encoding="utf-8")
+            logger.info("Saved %s report to %s", job.name, digest_path)
+        elif not digest:
+            logger.warning("Gemini returned no %s text.", job.name)
 
 
 async def process_roaster(
@@ -110,14 +194,15 @@ async def _process_roaster_inner(
         return None, []
 
     new_products = list(products)
-    cached_by_url: dict[str, bool] = {}
-    if page_cache:
-        for product in new_products:
-            cached_by_url[product.url] = page_cache.get(product.url) is not None
-    else:
-        for product in new_products:
-            cached_by_url[product.url] = False
     coffee_list = format_coffee_list(new_products) if settings.save_report else ""
+    cached_by_url: dict[str, bool] = {}
+    if settings.save_report:
+        if page_cache:
+            for product in new_products:
+                cached_by_url[product.url] = page_cache.get(product.url) is not None
+        else:
+            for product in new_products:
+                cached_by_url[product.url] = False
     logger.info(
         "Found %d products for %s (%d to evaluate).",
         len(products),
@@ -145,6 +230,7 @@ async def _process_roaster_inner(
             if coffee_list:
                 handle.write("\n")
                 handle.write(coffee_list)
+        logger.info("Saved roaster report to %s", report_path)
 
     if settings.fetch_only:
         logger.info(
@@ -186,27 +272,28 @@ async def _process_roaster_inner(
             )
 
     new_items: list[dict[str, str]] = []
-    for product in new_products:
-        if cached_by_url.get(product.url, False):
-            continue
-        body_text = ""
-        if product.body_html:
-            body_text = sanitize_html_to_text(
-                product.body_html,
-                settings.batch_page_text_max_chars,
-                remove_boilerplate=False,
+    if settings.save_report:
+        for product in new_products:
+            if cached_by_url.get(product.url, False):
+                continue
+            body_text = ""
+            if product.body_html:
+                body_text = sanitize_html_to_text(
+                    product.body_html,
+                    settings.batch_page_text_max_chars,
+                    remove_boilerplate=False,
+                )
+            description = page_text_by_id.get(product.product_id, "") or body_text
+            new_items.append(
+                {
+                    "roaster": roaster.name,
+                    "name": product.name,
+                    "url": product.url,
+                    "list_price": product.list_price,
+                    "badge": product.list_badge,
+                    "description": description,
+                }
             )
-        description = page_text_by_id.get(product.product_id, "") or body_text
-        new_items.append(
-            {
-                "roaster": roaster.name,
-                "name": product.name,
-                "url": product.url,
-                "list_price": product.list_price,
-                "badge": product.list_badge,
-                "description": description,
-            }
-        )
 
     prompt = build_batch_prompt(
         roaster.name,
@@ -253,13 +340,6 @@ async def _process_roaster_inner(
             )
             return report_path, new_items
         return None, new_items
-    if grounding:
-        logger.info(
-            "Gemini grounding metadata for %s: %s",
-            roaster.name,
-            json.dumps(grounding, ensure_ascii=True),
-        )
-
     if settings.save_report:
         report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
         write_report(report_path, body=markdown, grounding_payload=grounding)
@@ -319,73 +399,32 @@ async def run(settings: Settings) -> int:
         if not reports:
             logger.warning("Digest-only mode: no readable reports found.")
             return 0
-        digest_prompt = build_digest_prompt(reports, language)
-        digest_prompt_path = save_prompt_text(assets_dir, run_id, "digest", digest_prompt)
-        logger.info("Saved Gemini digest prompt to %s", digest_prompt_path)
-        if settings.save_prompt:
-            digest_prompt_report_path = save_prompt_text(
-                settings.reports_dir, run_id, "digest", digest_prompt
-            )
-            logger.info(
-                "Saved Gemini digest prompt copy to %s", digest_prompt_report_path
-            )
         new_items = extract_coffee_list_items(reports, logger)
-        new_digest_prompt = ""
-        if new_items:
-            new_digest_prompt = build_new_products_digest_prompt(
-                new_items,
-                settings.batch_page_text_max_chars,
-                language,
-            )
-            new_digest_prompt_path = save_prompt_text(
-                assets_dir, run_id, "new-digest", new_digest_prompt
-            )
-            logger.info(
-                "Saved Gemini new-products digest prompt to %s", new_digest_prompt_path
-            )
-            if settings.save_prompt:
-                new_digest_prompt_report_path = save_prompt_text(
-                    settings.reports_dir, run_id, "new-digest", new_digest_prompt
-                )
-                logger.info(
-                    "Saved Gemini new-products digest prompt copy to %s",
-                    new_digest_prompt_report_path,
-                )
+        digest_jobs = build_digest_jobs(
+            reports,
+            new_items,
+            language,
+            settings.batch_page_text_max_chars,
+        )
+        save_digest_prompts(
+            digest_jobs,
+            assets_dir,
+            settings.reports_dir,
+            run_id,
+            settings.save_prompt,
+            logger,
+        )
         if settings.skip_gemini:
             logger.info("Digest-only mode: Gemini skipped by configuration.")
             return 0
         genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
-        digest = await generate_digest_markdown(
+        await generate_digest_reports(
+            digest_jobs,
             genai_client,
-            settings.model,
-            digest_prompt,
+            settings,
             logger,
-            settings.gemini_timeout_s,
+            run_id,
         )
-        if digest and settings.save_report:
-            digest_path = report_file_path(
-                settings.reports_dir, "digest", run_id, None, "md"
-            )
-            digest_path.write_text(digest, encoding="utf-8")
-            logger.info("Saved digest report to %s", digest_path)
-        elif not digest:
-            logger.warning("Gemini returned no digest text.")
-        if new_digest_prompt:
-            new_digest = await generate_digest_markdown(
-                genai_client,
-                settings.model,
-                new_digest_prompt,
-                logger,
-                settings.gemini_timeout_s,
-            )
-            if new_digest and settings.save_report:
-                new_digest_path = report_file_path(
-                    settings.reports_dir, "new-digest", run_id, None, "md"
-                )
-                new_digest_path.write_text(new_digest, encoding="utf-8")
-                logger.info("Saved new-products digest report to %s", new_digest_path)
-            elif not new_digest:
-                logger.warning("Gemini returned no new-products digest text.")
         logger.info("Run complete.")
         return 0
     page_cache = PageCache(settings.cache_db_path, logger)
@@ -427,72 +466,33 @@ async def run(settings: Settings) -> int:
         if path:
             report_paths.append(path)
         new_items.extend(items)
-    if settings.save_report and report_paths:
+    reports: list[tuple[str, str]] = []
+    if report_paths:
         reports = load_reports_for_digest(report_paths, logger)
-        if reports:
-            digest_prompt = build_digest_prompt(reports, language)
-            digest_prompt_path = save_prompt_text(assets_dir, run_id, "digest", digest_prompt)
-            logger.info("Saved Gemini digest prompt to %s", digest_prompt_path)
-            if settings.save_prompt:
-                digest_prompt_report_path = save_prompt_text(
-                    settings.reports_dir, run_id, "digest", digest_prompt
-                )
-                logger.info(
-                    "Saved Gemini digest prompt copy to %s", digest_prompt_report_path
-                )
-            genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
-            digest = await generate_digest_markdown(
-                genai_client,
-                settings.model,
-                digest_prompt,
-                logger,
-                settings.gemini_timeout_s,
-            )
-            if digest:
-                digest_path = report_file_path(
-                    settings.reports_dir, "digest", run_id, None, "md"
-                )
-                digest_path.write_text(digest, encoding="utf-8")
-                logger.info("Saved digest report to %s", digest_path)
-            else:
-                logger.warning("Gemini returned no digest text.")
-
-    if settings.save_report and new_items:
-        new_digest_prompt = build_new_products_digest_prompt(
+    if settings.save_report:
+        digest_jobs = build_digest_jobs(
+            reports,
             new_items,
-            settings.batch_page_text_max_chars,
             language,
+            settings.batch_page_text_max_chars,
         )
-        new_digest_prompt_path = save_prompt_text(
-            assets_dir, run_id, "new-digest", new_digest_prompt
-        )
-        logger.info(
-            "Saved Gemini new-products digest prompt to %s", new_digest_prompt_path
-        )
-        if settings.save_prompt:
-            new_digest_prompt_report_path = save_prompt_text(
-                settings.reports_dir, run_id, "new-digest", new_digest_prompt
+        if digest_jobs:
+            save_digest_prompts(
+                digest_jobs,
+                assets_dir,
+                settings.reports_dir,
+                run_id,
+                settings.save_prompt,
+                logger,
             )
-            logger.info(
-                "Saved Gemini new-products digest prompt copy to %s",
-                new_digest_prompt_report_path,
+            genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
+            await generate_digest_reports(
+                digest_jobs,
+                genai_client,
+                settings,
+                logger,
+                run_id,
             )
-        genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
-        new_digest = await generate_digest_markdown(
-            genai_client,
-            settings.model,
-            new_digest_prompt,
-            logger,
-            settings.gemini_timeout_s,
-        )
-        if new_digest and settings.save_report:
-            new_digest_path = report_file_path(
-                settings.reports_dir, "new-digest", run_id, None, "md"
-            )
-            new_digest_path.write_text(new_digest, encoding="utf-8")
-            logger.info("Saved new-products digest report to %s", new_digest_path)
-        elif not new_digest:
-            logger.warning("Gemini returned no new-products digest text.")
 
     logger.info("Run complete.")
     return 0

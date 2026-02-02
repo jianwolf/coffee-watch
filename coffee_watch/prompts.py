@@ -161,3 +161,28 @@ def build_new_products_digest_prompt(
         lines.append("")
         sections.append("\n".join(lines))
     return "\n".join(sections)
+
+
+def build_roaster_ratings_digest_prompt(
+    reports: list[tuple[str, str]],
+    language: str,
+) -> str:
+    header = (
+        "You are given markdown reports for multiple coffee roasters.\n"
+        "Rate each roaster's current offerings based on the strength of standout coffees "
+        "in its report. Use a 1-10 score where 10 means an exceptional lineup right now "
+        "and 1 means no compelling coffees.\n"
+        "Provide a scorecard that lists every roaster and its rating, then detailed analysis "
+        "per roaster.\n"
+        "Recommend highlight roasters (strongest current lineups) and lowlight roasters "
+        "(weakest current lineups), with detailed reasoning and background.\n"
+        "Do not worry about a long report length.\n"
+        "Explicitly list all roasters represented in the reports; do not assume a fixed set.\n"
+        "Only use the information provided in the reports; do not introduce new coffees "
+        "or roasters.\n"
+        f"{language_instruction(language)}\n\n"
+    )
+    sections = [header]
+    for name, text in reports:
+        sections.append(f"## Report: {name}\n\n{text}\n")
+    return "\n".join(sections)
