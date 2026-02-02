@@ -21,7 +21,7 @@ from .gemini import evaluate_roaster_markdown, format_grounding_metadata, genera
 from .logging_utils import setup_logging
 from .models import ProductCandidate, RoasterSource
 from .network import fetch_product_page_text, fetch_products_for_roaster, merge_headers
-from .page_cache import CachedPage, PageCache
+from .seen_products import SeenProducts
 from .parsing import load_denylist, load_roasters
 from .prompts import (
     build_batch_prompt,
@@ -77,40 +77,60 @@ def _parse_http_date(value: str) -> Optional[date]:
 
 
 def _resolve_update_date(
-    product: ProductCandidate, cached: Optional[CachedPage]
+    product: ProductCandidate, html_last_modified: str, seen_at: str
 ) -> tuple[Optional[date], str]:
-    shopify_value = product.shopify_updated_at
-    if not shopify_value and cached:
-        shopify_value = cached.shopify_updated_at
-    shopify_date = _parse_iso_date(shopify_value)
-    if shopify_date:
-        return shopify_date, "shopify_updated_at"
-    if cached:
-        html_value = cached.html_last_modified or cached.last_modified
-        html_date = _parse_http_date(html_value)
-        if html_date:
-            return html_date, "html_last_modified"
-        cached_date = _parse_iso_date(cached.cached_at)
-        if cached_date:
-            return cached_date, "cached_at"
+    published_date = _parse_iso_date(product.shopify_published_at)
+    if published_date:
+        return published_date, "shopify_published_at"
+    html_date = _parse_http_date(html_last_modified)
+    if html_date:
+        return html_date, "html_last_modified"
+    seen_date = _parse_iso_date(seen_at)
+    if seen_date:
+        return seen_date, "seen_at"
     return None, "unknown"
 
 
 def classify_new_products(
     products: list[ProductCandidate],
-    cached_pages: dict[str, Optional[CachedPage]],
     run_day: date,
+    seen_products: SeenProducts,
+    descriptions_by_url: dict[str, str],
+    html_last_modified_by_url: dict[str, str],
 ) -> tuple[set[str], dict[str, int], int, int]:
     new_urls: set[str] = set()
-    by_source = {"shopify_updated_at": 0, "html_last_modified": 0, "cached_at": 0}
+    by_source = {
+        "shopify_published_at": 0,
+        "html_last_modified": 0,
+        "seen_at": 0,
+    }
     undated = 0
     not_today = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
     for product in products:
-        cached = cached_pages.get(product.url)
-        updated_date, source = _resolve_update_date(product, cached)
+        description = descriptions_by_url.get(product.url, "")
+        seen_hash = seen_products.compute_hash(product.url, product.name, description)
+        seen_entry = seen_products.get(seen_hash)
+        seen_at = seen_entry.first_seen_at if seen_entry else ""
+        html_last_modified = html_last_modified_by_url.get(product.url, "")
+
+        updated_date, source = _resolve_update_date(
+            product, html_last_modified, seen_at
+        )
         if updated_date is None:
             undated += 1
-            continue
+            source = "undated"
+            updated_date = run_day
+
+        seen_products.record(
+            seen_hash,
+            product.url,
+            product.name,
+            description,
+            now_iso,
+            shopify_updated_at=product.shopify_updated_at,
+        )
+
         if updated_date != run_day:
             not_today += 1
             continue
@@ -209,7 +229,7 @@ async def process_roaster(
     api_key: Optional[str],
     language: str,
     denylist: set[str],
-    page_cache: Optional[PageCache],
+    seen_products: SeenProducts,
 ) -> tuple[Optional[Path], list[dict[str, Any]]]:
     try:
         return await _process_roaster_inner(
@@ -221,11 +241,11 @@ async def process_roaster(
             assets_dir,
             http_semaphore,
             logger,
-            api_key,
-            language,
-            denylist,
-            page_cache,
-        )
+        api_key,
+        language,
+        denylist,
+        seen_products,
+    )
     except Exception as exc:
         logger.exception("Roaster processing failed for %s: %s", roaster.name, exc)
         return None, []
@@ -243,7 +263,7 @@ async def _process_roaster_inner(
     api_key: Optional[str],
     language: str,
     denylist: set[str],
-    page_cache: Optional[PageCache],
+    seen_products: SeenProducts,
 ) -> tuple[Optional[Path], list[dict[str, Any]]]:
     base_url = normalize_base_url(roaster.base_url)
     domain = urlsplit(base_url).netloc.lower()
@@ -266,16 +286,6 @@ async def _process_roaster_inner(
         return None, []
 
     new_products = list(products)
-    cached_pages: dict[str, Optional[CachedPage]] = {}
-    if page_cache:
-        for product in new_products:
-            cached_pages[product.url] = page_cache.get(product.url)
-            page_cache.update_shopify_updated_at(
-                product.url, product.shopify_updated_at
-            )
-    else:
-        for product in new_products:
-            cached_pages[product.url] = None
     run_day = datetime.strptime(run_id, "%Y%m%d").date()
     coffee_list = ""
     logger.info(
@@ -286,7 +296,8 @@ async def _process_roaster_inner(
     )
 
     page_text_by_id = {product.product_id: "" for product in new_products}
-    cache_usage: dict[str, int] = {"hits": 0}
+    html_last_modified_by_url: dict[str, str] = {}
+    page_fetch_count = 0
 
     def write_report(
         report_path: Path,
@@ -310,14 +321,31 @@ async def _process_roaster_inner(
                 handle.write(coffee_list)
         logger.info("Saved roaster report to %s", report_path)
 
+    def build_descriptions_by_url() -> dict[str, str]:
+        descriptions: dict[str, str] = {}
+        for product in new_products:
+            body_text = ""
+            if product.body_html:
+                body_text = sanitize_html_to_text(
+                    product.body_html,
+                    settings.batch_page_text_max_chars,
+                    remove_boilerplate=False,
+                )
+            description = page_text_by_id.get(product.product_id, "") or body_text
+            descriptions[product.url] = description
+        return descriptions
+
     if settings.fetch_only:
         logger.info(
             "Fetch-only mode enabled; skipping product page fetches and Gemini."
         )
+        descriptions_by_url = build_descriptions_by_url()
         new_urls, by_source, undated, not_today = classify_new_products(
             new_products,
-            cached_pages,
             run_day,
+            seen_products,
+            descriptions_by_url,
+            html_last_modified_by_url,
         )
         report_path = None
         if settings.save_report:
@@ -329,73 +357,74 @@ async def _process_roaster_inner(
             report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
             write_report(report_path, note="Fetch-only mode enabled; no LLM output.")
         logger.info(
-            "New products for %s (updated %s): %d "
-            "[shopify_updated_at=%d, html_last_modified=%d, cached_at=%d, undated=%d, not_today=%d]. "
-            "Cached page text used for %d products.",
+            "New products for %s (dated %s): %d "
+            "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+            "undated=%d, not_today=%d]. Page text fetched for %d products.",
             roaster.name,
             run_id,
             len(new_urls),
-            by_source["shopify_updated_at"],
+            by_source["shopify_published_at"],
             by_source["html_last_modified"],
-            by_source["cached_at"],
+            by_source["seen_at"],
             undated,
             not_today,
-            cache_usage.get("hits", 0),
+            page_fetch_count,
         )
         return report_path, []
 
-    page_headers = merge_headers(
-        {"User-Agent": USER_AGENT},
-        roaster.product_page_headers,
-        logger,
-        f"{roaster.name} product page",
-    )
-    products_needing_pages = [
-        product for product in new_products if not product.body_html
-    ]
-    if products_needing_pages:
-        page_tasks = [
-            fetch_product_page_text(
-                http_client,
-                product,
-                settings,
-                robots_cache,
-                logger,
-                page_headers,
-                http_semaphore,
-                page_cache,
-                cache_usage,
-                jitter_multiplier=roaster.jitter_multiplier,
-            )
-            for product in products_needing_pages
+    if roaster.platform != "shopify":
+        page_headers = merge_headers(
+            {"User-Agent": USER_AGENT},
+            roaster.product_page_headers,
+            logger,
+            f"{roaster.name} product page",
+        )
+        products_needing_pages = [
+            product for product in new_products if not product.body_html
         ]
-        page_texts = await asyncio.gather(*page_tasks)
-        for product, text in zip(products_needing_pages, page_texts):
-            page_text_by_id[product.product_id] = trim_text_at_phrases(
-                text, roaster.page_text_stop_phrases
-            )
-    if page_cache:
-        for product in new_products:
-            cached_pages[product.url] = page_cache.get(product.url)
+        page_fetch_count = len(products_needing_pages)
+        if products_needing_pages:
+            page_tasks = [
+                fetch_product_page_text(
+                    http_client,
+                    product,
+                    settings,
+                    robots_cache,
+                    logger,
+                    page_headers,
+                    http_semaphore,
+                    jitter_multiplier=roaster.jitter_multiplier,
+                )
+                for product in products_needing_pages
+            ]
+            page_results = await asyncio.gather(*page_tasks)
+            for product, (text, last_modified) in zip(
+                products_needing_pages, page_results
+            ):
+                page_text_by_id[product.product_id] = trim_text_at_phrases(
+                    text, roaster.page_text_stop_phrases
+                )
+                if last_modified:
+                    html_last_modified_by_url[product.url] = last_modified
+    else:
+        logger.info(
+            "Skipping product page fetches for %s (platform shopify).", roaster.name
+        )
 
+    descriptions_by_url = build_descriptions_by_url()
     new_urls, by_source, undated, not_today = classify_new_products(
         new_products,
-        cached_pages,
         run_day,
+        seen_products,
+        descriptions_by_url,
+        html_last_modified_by_url,
     )
     new_items: list[dict[str, Any]] = []
     if settings.save_report and new_urls:
         for product in new_products:
             if product.url not in new_urls:
                 continue
-            body_text = ""
-            if product.body_html:
-                body_text = sanitize_html_to_text(
-                    product.body_html,
-                    settings.batch_page_text_max_chars,
-                    remove_boilerplate=False,
-                )
-            description = page_text_by_id.get(product.product_id, "") or body_text
+            description = descriptions_by_url.get(product.url, "")
             variant_lines = format_variant_lines(product.variants)
             new_items.append(
                 {
@@ -439,18 +468,18 @@ async def _process_roaster_inner(
             report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
             write_report(report_path, note="Gemini skipped by configuration.")
         logger.info(
-            "New products for %s (updated %s): %d "
-            "[shopify_updated_at=%d, html_last_modified=%d, cached_at=%d, undated=%d, not_today=%d]. "
-            "Cached page text used for %d products.",
+            "New products for %s (dated %s): %d "
+            "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+            "undated=%d, not_today=%d]. Page text fetched for %d products.",
             roaster.name,
             run_id,
             len(new_urls),
-            by_source["shopify_updated_at"],
+            by_source["shopify_published_at"],
             by_source["html_last_modified"],
-            by_source["cached_at"],
+            by_source["seen_at"],
             undated,
             not_today,
-            cache_usage.get("hits", 0),
+            page_fetch_count,
         )
         return report_path, new_items
 
@@ -479,18 +508,18 @@ async def _process_roaster_inner(
                 grounding_payload=grounding,
             )
         logger.info(
-            "New products for %s (updated %s): %d "
-            "[shopify_updated_at=%d, html_last_modified=%d, cached_at=%d, undated=%d, not_today=%d]. "
-            "Cached page text used for %d products.",
+            "New products for %s (dated %s): %d "
+            "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+            "undated=%d, not_today=%d]. Page text fetched for %d products.",
             roaster.name,
             run_id,
             len(new_urls),
-            by_source["shopify_updated_at"],
+            by_source["shopify_published_at"],
             by_source["html_last_modified"],
-            by_source["cached_at"],
+            by_source["seen_at"],
             undated,
             not_today,
-            cache_usage.get("hits", 0),
+            page_fetch_count,
         )
         return report_path, new_items
     if settings.save_report:
@@ -504,18 +533,18 @@ async def _process_roaster_inner(
     else:
         report_path = None
     logger.info(
-        "New products for %s (updated %s): %d "
-        "[shopify_updated_at=%d, html_last_modified=%d, cached_at=%d, undated=%d, not_today=%d]. "
-        "Cached page text used for %d products.",
+        "New products for %s (dated %s): %d "
+        "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+        "undated=%d, not_today=%d]. Page text fetched for %d products.",
         roaster.name,
         run_id,
         len(new_urls),
-        by_source["shopify_updated_at"],
+        by_source["shopify_published_at"],
         by_source["html_last_modified"],
-        by_source["cached_at"],
+        by_source["seen_at"],
         undated,
         not_today,
-        cache_usage.get("hits", 0),
+        page_fetch_count,
     )
     return report_path, new_items
 
@@ -579,10 +608,11 @@ async def run(settings: Settings) -> int:
         new_items = extract_coffee_list_items(reports, logger)
         filtered_new_items = new_items
         if new_items:
-            page_cache = PageCache(settings.cache_db_path, logger)
+            seen_products = SeenProducts(settings.seen_db_path, logger)
             try:
                 digest_products: list[ProductCandidate] = []
-                cached_pages: dict[str, Optional[CachedPage]] = {}
+                descriptions_by_url: dict[str, str] = {}
+                html_last_modified_by_url: dict[str, str] = {}
                 for item in new_items:
                     url = str(item.get("url", "") or "").strip()
                     product = ProductCandidate(
@@ -595,14 +625,19 @@ async def run(settings: Settings) -> int:
                         body_html="",
                         variants=(),
                         shopify_updated_at=str(item.get("shopify_updated_at", "") or ""),
+                        shopify_published_at=str(
+                            item.get("shopify_published_at", "") or ""
+                        ),
                     )
                     digest_products.append(product)
-                    cached_pages[url] = page_cache.get(url) if url else None
+                    descriptions_by_url[url] = str(item.get("description", "") or "")
                 run_day = datetime.strptime(run_id, "%Y%m%d").date()
                 new_urls, by_source, undated, not_today = classify_new_products(
                     digest_products,
-                    cached_pages,
                     run_day,
+                    seen_products,
+                    descriptions_by_url,
+                    html_last_modified_by_url,
                 )
                 filtered_new_items = [
                     item
@@ -610,18 +645,19 @@ async def run(settings: Settings) -> int:
                     if product.url and product.url in new_urls
                 ]
                 logger.info(
-                    "Digest-only new products (updated %s): %d "
-                    "[shopify_updated_at=%d, html_last_modified=%d, cached_at=%d, undated=%d, not_today=%d].",
+                    "Digest-only new products (dated %s): %d "
+                    "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+                    "undated=%d, not_today=%d].",
                     run_id,
                     len(filtered_new_items),
-                    by_source["shopify_updated_at"],
+                    by_source["shopify_published_at"],
                     by_source["html_last_modified"],
-                    by_source["cached_at"],
+                    by_source["seen_at"],
                     undated,
                     not_today,
                 )
             finally:
-                page_cache.close()
+                seen_products.close()
         digest_jobs = build_digest_jobs(
             reports,
             filtered_new_items,
@@ -649,7 +685,7 @@ async def run(settings: Settings) -> int:
         )
         logger.info("Run complete.")
         return 0
-    page_cache = PageCache(settings.cache_db_path, logger)
+    seen_products = SeenProducts(settings.seen_db_path, logger)
     try:
         async with httpx.AsyncClient(
             http2=True,
@@ -670,13 +706,13 @@ async def run(settings: Settings) -> int:
                     api_key,
                     language,
                     denylist,
-                    page_cache,
+                    seen_products,
                 )
                 for roaster in roasters
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
     finally:
-        page_cache.close()
+        seen_products.close()
 
     report_paths: list[Path] = []
     new_items: list[dict[str, Any]] = []

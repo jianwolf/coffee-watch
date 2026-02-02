@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import random
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlsplit
@@ -17,7 +16,6 @@ from .constants import USER_AGENT
 from .models import PaginationConfig, ProductCandidate, ProductFieldConfig, RoasterSource
 from .parsing import parse_products_json, parse_products_response
 from .reporting import log_products_json_snippet, save_products_json, save_products_json_pretty
-from .page_cache import PageCache
 from .text_utils import extract_product_jsonld_text, sanitize_html_to_text
 from .url_utils import build_url_with_params
 
@@ -298,29 +296,8 @@ async def fetch_product_page_text(
     logger: logging.Logger,
     headers: dict[str, str],
     semaphore: Optional[asyncio.Semaphore],
-    page_cache: Optional[PageCache],
-    cache_usage: Optional[dict[str, int]] = None,
     jitter_multiplier: float = 1.0,
-) -> str:
-    def record_cache_use() -> None:
-        if cache_usage is None:
-            return
-        cache_usage["hits"] = cache_usage.get("hits", 0) + 1
-
-    cached = page_cache.get(product.url) if page_cache else None
-    now = datetime.now(timezone.utc)
-    if cached and settings.cache_max_age_s > 0:
-        try:
-            cached_at = datetime.fromisoformat(cached.fetched_at)
-        except ValueError:
-            cached_at = None
-        if cached_at is not None:
-            age_s = (now - cached_at).total_seconds()
-            if age_s < settings.cache_max_age_s:
-                logger.info("Using cached page text for %s", product.url)
-                record_cache_use()
-                return cached.scraped_text
-
+) -> tuple[str, str]:
     product_allowed = await robots_allows(
         http_client,
         product.url,
@@ -334,65 +311,27 @@ async def fetch_product_page_text(
             "Robots.txt disallows product page %s; skipping page fetch.",
             product.url,
         )
-        if cached:
-            record_cache_use()
-            return cached.scraped_text
-        return ""
-
-    request_headers = dict(headers)
-    if cached:
-        if cached.etag:
-            request_headers["If-None-Match"] = cached.etag
-        last_modified = cached.html_last_modified or cached.last_modified
-        if last_modified:
-            request_headers["If-Modified-Since"] = last_modified
+        return "", ""
 
     page_response = await fetch_text_with_jitter(
         http_client,
         product.url,
         settings,
         logger,
-        headers=request_headers,
+        headers=headers,
         semaphore=semaphore,
         jitter_multiplier=jitter_multiplier,
     )
     if page_response is None:
         logger.warning("Request failed for product page %s", product.url)
-        if cached:
-            record_cache_use()
-            return cached.scraped_text
-        return ""
-    if page_response.status_code == 304 and cached:
-        logger.info("Not modified; using cached page text for %s", product.url)
-        html_last_modified = (
-            page_response.headers.get("last-modified")
-            or cached.html_last_modified
-            or cached.last_modified
-        )
-        if page_cache:
-            page_cache.upsert(
-                product.url,
-                now.isoformat(),
-                html_last_modified,
-                cached.etag,
-                page_response.status_code,
-                cached.scraped_text,
-                shopify_updated_at=product.shopify_updated_at or cached.shopify_updated_at,
-                html_last_modified=html_last_modified,
-                cached_at=cached.cached_at,
-            )
-        record_cache_use()
-        return cached.scraped_text
+        return "", ""
     if page_response.status_code >= 400:
         logger.warning(
             "Non-200 response %s for product page %s",
             page_response.status_code,
             product.url,
         )
-        if cached:
-            record_cache_use()
-            return cached.scraped_text
-        return ""
+        return "", ""
     html = page_response.text
     page_text = extract_product_jsonld_text(html, settings.page_text_max_chars)
     if not page_text:
@@ -400,19 +339,8 @@ async def fetch_product_page_text(
     logger.info(
         "Sanitized %s chars of page text for %s", len(page_text), product.url
     )
-    if page_cache:
-        html_last_modified = page_response.headers.get("last-modified", "")
-        page_cache.upsert(
-            product.url,
-            now.isoformat(),
-            html_last_modified,
-            page_response.headers.get("etag", ""),
-            page_response.status_code,
-            page_text,
-            shopify_updated_at=product.shopify_updated_at,
-            html_last_modified=html_last_modified,
-        )
-    return page_text
+    html_last_modified = page_response.headers.get("last-modified", "")
+    return page_text, html_last_modified
 
 
 def merge_headers(

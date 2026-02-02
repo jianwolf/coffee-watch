@@ -175,6 +175,7 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
         roaster = RoasterSource(
             name=str(entry.get("name", base_url)),
             base_url=base_url,
+            platform=str(entry.get("platform", "unknown")).strip().lower() or "unknown",
             products_path=str(entry.get("products_path", "/products.json")),
             enabled=bool(entry.get("enabled", True)),
             products_type=products_type,
@@ -352,6 +353,7 @@ def parse_products_json(
         item_id = first_field(item, product_fields.id_fields)
         body_html = str(item.get("body_html") or "").strip()
         updated_at = str(item.get("updated_at") or "").strip()
+        published_at = str(item.get("published_at") or "").strip()
         variants = parse_variants(item.get("variants"))
 
         url = resolve_product_url(base_url, url, handle, item_id, url_template)
@@ -371,6 +373,7 @@ def parse_products_json(
                 body_html=body_html,
                 variants=tuple(variants),
                 shopify_updated_at=updated_at,
+                shopify_published_at=published_at,
             )
         )
         if len(products) >= max_count:

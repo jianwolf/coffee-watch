@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, confloat
 class RoasterSource:
     name: str
     base_url: str
+    platform: str = "unknown"
     products_path: str = "/products.json"
     enabled: bool = True
     products_type: str = "auto"  # auto|json|html
@@ -51,6 +52,7 @@ class ProductCandidate:
     body_html: str = ""
     variants: tuple["VariantInfo", ...] = ()
     shopify_updated_at: str = ""
+    shopify_published_at: str = ""
 
 
 @dataclass(frozen=True)

@@ -27,8 +27,7 @@ class Settings:
     save_pretty_products_json: bool
     save_raw_products_json: bool
     save_report: bool
-    cache_db_path: Path
-    cache_max_age_s: float
+    seen_db_path: Path
     roasters_path: Path
     denylist_path: Path
     reports_dir: Path
@@ -56,8 +55,7 @@ class Settings:
             save_pretty_products_json=False,
             save_raw_products_json=False,
             save_report=True,
-            cache_db_path=Path("logs/coffee_watch_cache.sqlite"),
-            cache_max_age_s=21600.0,
+            seen_db_path=Path("logs/seen_products.db"),
             roasters_path=Path("config/roasters.json"),
             denylist_path=Path("config/denylist.txt"),
             reports_dir=Path("reports"),
@@ -123,12 +121,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     add_bool_flag(parser, "save-raw-products-json", "save raw products JSON", None)
     add_bool_flag(parser, "save-report", "save Gemini reports", None)
-    parser.add_argument("--cache-db-path", type=Path, help="Path to SQLite cache DB")
-    parser.add_argument(
-        "--cache-max-age-s",
-        type=float,
-        help="Max age (s) before re-fetching cached pages (0 = always revalidate)",
-    )
+    parser.add_argument("--seen-db-path", type=Path, help="Path to SQLite seen DB")
     parser.add_argument("--roasters-path", type=Path, help="Path to roasters JSON")
     parser.add_argument("--denylist-path", type=Path, help="Path to denylist file")
     parser.add_argument("--reports-dir", type=Path, help="Reports output directory")
@@ -172,6 +165,14 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         value = pick_value(field)
         return value if isinstance(value, Path) else Path(str(value))
 
+    def pick_seen_db_path() -> Path:
+        if getattr(args, "seen_db_path", None) is not None:
+            value = args.seen_db_path
+            return value if isinstance(value, Path) else Path(str(value))
+        if "seen_db_path" in config and config["seen_db_path"] is not None:
+            return Path(str(config["seen_db_path"]))
+        return defaults.seen_db_path
+
     return Settings(
         model=str(pick_value("model")),
         gemini_timeout_s=float(pick_value("gemini_timeout_s")),
@@ -190,8 +191,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         save_pretty_products_json=bool(pick_value("save_pretty_products_json")),
         save_raw_products_json=bool(pick_value("save_raw_products_json")),
         save_report=bool(pick_value("save_report")),
-        cache_db_path=pick_path("cache_db_path"),
-        cache_max_age_s=float(pick_value("cache_max_age_s")),
+        seen_db_path=pick_seen_db_path(),
         roasters_path=pick_path("roasters_path"),
         denylist_path=pick_path("denylist_path"),
         reports_dir=pick_path("reports_dir"),
