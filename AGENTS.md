@@ -9,7 +9,7 @@
 - Configuration files are under `config/` (e.g., `config/roasters.json`, `config/denylist.txt`).
 - Generated artifacts go to `reports/` and `logs/` (both are local outputs).
 - Dependencies are listed in `requirements.txt`.
-- Caching lives in `coffee_watch/page_cache.py` (SQLite) and catalog parsing lives in `coffee_watch/catalog_parsers.py`.
+- Seen-products tracking lives in `coffee_watch/seen_products.py` (SQLite) and catalog parsing lives in `coffee_watch/catalog_parsers.py`.
 
 ## Build, Test, and Development Commands
 - `python -m venv .venv && source .venv/bin/activate` — create/activate a virtualenv.
@@ -39,5 +39,5 @@
 - Secrets are read from environment variables (e.g., `GEMINI_API_KEY`); never commit secrets.
 - The crawler respects `robots.txt` and uses a fixed User-Agent; keep these defaults intact.
 - Use `config/denylist.txt` to opt out specific domains.
-- Page caching uses `logs/coffee_watch_cache.sqlite`; `cache_max_age_s` controls revalidation.
+- Seen-products tracking uses `logs/seen_products.db` to persist first-seen hashes.
 - Per-roaster throttling can be tuned via `jitter_multiplier` in `config/roasters.json`.

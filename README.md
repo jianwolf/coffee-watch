@@ -9,14 +9,14 @@ A low-frequency monitoring agent that checks specialty coffee roasters for new r
 - Batch evaluation with grounded Gemini outputs and saved markdown reports.
 - Config-driven sources for easy customization.
 - Structured logs for requests, prompts, and outcomes.
-- SQLite page cache with conditional requests (ETag/Last-Modified) to avoid double pulls.
+- SQLite seen-products store to track first-seen items by URL/title/description hash.
 - Exponential retry with jitter on transient failures (e.g., 429/5xx).
 - Stateless runs; outputs are written to `reports/` and `logs/`.
 
 ## How it works
 1. Load roaster sources from `config/roasters.json`.
 2. Fetch product lists and (optionally) product pages with robots.txt compliance.
-3. Use cached page text when available; otherwise fetch with conditional requests.
+3. Track first-seen products in SQLite and classify new items by publish date, page headers, or first-seen timestamp.
 4. Build a batch prompt from product metadata and sanitized page text.
 5. Generate a per-roaster report, a full digest, a new-products digest, and a roaster ratings digest.
 
@@ -28,7 +28,7 @@ A low-frequency monitoring agent that checks specialty coffee roasters for new r
 - `coffee_watch/catalog_parsers.py` handles site-specific catalog parsing (e.g., Wix).
 - `coffee_watch/prompts.py` builds Gemini prompts and language helpers.
 - `coffee_watch/gemini.py` wraps Gemini calls + grounding extraction.
-- `coffee_watch/page_cache.py` stores cached page text + headers in SQLite.
+- `coffee_watch/seen_products.py` stores first-seen products in SQLite.
 
 ## Quickstart
 ```bash
@@ -50,7 +50,7 @@ Override on the CLI:
 ```bash
 python main.py --language zh --http-concurrency 1 --skip-gemini
 python main.py --gemini-timeout-s 600
-python main.py --cache-max-age-s 0  # always revalidate
+python main.py --seen-db-path logs/seen_products.db
 python main.py --digest-only        # generate digests from today's reports only (UTC)
 ```
 
@@ -86,8 +86,7 @@ Example `config/settings.json`:
   "save_pretty_products_json": false,
   "save_raw_products_json": false,
   "save_report": true,
-  "cache_db_path": "logs/coffee_watch_cache.sqlite",
-  "cache_max_age_s": 21600.0,
+  "seen_db_path": "logs/seen_products.db",
   "roasters_path": "config/roasters.json",
   "denylist_path": "config/denylist.txt",
   "reports_dir": "reports",
@@ -99,19 +98,20 @@ Example `config/settings.json`:
 Notes:
 - Only `GEMINI_API_KEY` is read from the environment.
 - Descriptions are extracted from product `body_html` (when available).
+- Shopify sources rely on `products.json` and skip per-product page fetches.
 - `gemini_timeout_s` controls Gemini request timeouts in seconds (0 = no timeout).
 - Reports are saved as `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-digest.md`, and `YYYYMMDD-roaster-digest.md` (UTC date).
 - A new-products digest is saved as `YYYYMMDD-new-digest.md` when new coffees are detected.
-- Cached page text is stored in `logs/coffee_watch_cache.sqlite`.
+- Seen products are stored in `logs/seen_products.db`.
 
 ## Configuration
-- `config/roasters.json` controls sources, endpoints, and per-roaster settings.
+- `config/roasters.json` controls sources, endpoints, and per-roaster settings (including `platform`).
 - `config/denylist.txt` can block domains on request (one per line).
 
 ## Outputs (generated locally)
 - `reports/` — Markdown reports + prompt captures
 - `logs/coffee_watch.log` — request/response and Gemini traces
-- `logs/coffee_watch_cache.sqlite` — cached page text + last-modified/etag metadata
+- `logs/seen_products.db` — seen product hashes and first-seen timestamps
 
 ## Support & Opt-out
 For questions or issues, open a GitHub Issue.

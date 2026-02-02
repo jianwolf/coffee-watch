@@ -1,3 +1,4 @@
+# Stdlib usage: sqlite3, hashlib (sha3_512)
 httpx[http2]
 google-genai
 pydantic
