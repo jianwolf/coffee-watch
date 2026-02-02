@@ -389,16 +389,20 @@ async def run(settings: Settings) -> int:
     if settings.digest_only:
         report_paths = [
             path
-            for path in settings.reports_dir.glob("*.md")
-            if "-digest.md" not in path.name
+            for path in settings.reports_dir.glob(f"{run_id}-*.md")
+            if "-digest" not in path.name
         ]
         if not report_paths:
-            logger.warning("Digest-only mode: no reports found in %s", settings.reports_dir)
-            return 0
+            logger.error(
+                "Digest-only mode: no reports found for %s in %s",
+                run_id,
+                settings.reports_dir,
+            )
+            return 1
         reports = load_reports_for_digest(report_paths, logger)
         if not reports:
-            logger.warning("Digest-only mode: no readable reports found.")
-            return 0
+            logger.error("Digest-only mode: no readable reports found for %s.", run_id)
+            return 1
         new_items = extract_coffee_list_items(reports, logger)
         digest_jobs = build_digest_jobs(
             reports,

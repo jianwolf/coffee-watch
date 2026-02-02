@@ -51,7 +51,7 @@ Override on the CLI:
 python main.py --language zh --http-concurrency 1 --skip-gemini
 python main.py --gemini-timeout-s 600
 python main.py --cache-max-age-s 0  # always revalidate
-python main.py --digest-only        # generate digest from existing reports only
+python main.py --digest-only        # generate digests from today's reports only (UTC)
 ```
 
 ### Testing

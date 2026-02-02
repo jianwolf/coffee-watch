@@ -12,3 +12,4 @@ def setup_logging(level: str) -> None:
     stream = logging.StreamHandler()
     stream.setFormatter(formatter)
     root.addHandler(stream)
+    logging.getLogger("google_genai.models").setLevel(logging.WARNING)
