@@ -351,6 +351,7 @@ def parse_products_json(
         handle = first_field(item, product_fields.handle_fields)
         item_id = first_field(item, product_fields.id_fields)
         body_html = str(item.get("body_html") or "").strip()
+        updated_at = str(item.get("updated_at") or "").strip()
         variants = parse_variants(item.get("variants"))
 
         url = resolve_product_url(base_url, url, handle, item_id, url_template)
@@ -369,6 +370,7 @@ def parse_products_json(
                 source=roaster.name,
                 body_html=body_html,
                 variants=tuple(variants),
+                shopify_updated_at=updated_at,
             )
         )
         if len(products) >= max_count:

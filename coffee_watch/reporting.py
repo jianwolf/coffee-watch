@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .models import RoasterSource
+from .parsing import product_id_from_url
 from .url_utils import safe_slug
 
 
@@ -126,8 +127,8 @@ def load_reports_for_digest(
 
 def extract_coffee_list_items(
     reports: list[tuple[str, str]], logger: logging.Logger
-) -> list[dict[str, str]]:
-    items: list[dict[str, str]] = []
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
     for report_name, text in reports:
         roaster_name = ""
         for line in text.splitlines():
@@ -137,7 +138,19 @@ def extract_coffee_list_items(
         if not roaster_name:
             roaster_name = report_name
 
+        def finalize_item(item: Optional[dict[str, Any]]) -> None:
+            if not item:
+                return
+            if not item.get("product_id") and item.get("url"):
+                item["product_id"] = product_id_from_url(str(item["url"]))
+            if "variant_lines" not in item:
+                item["variant_lines"] = []
+            items.append(item)
+
         in_list = False
+        current: Optional[dict[str, Any]] = None
+        in_variants = False
+        expecting_description = False
         for line in text.splitlines():
             if line.strip() == "## Coffee list":
                 in_list = True
@@ -146,29 +159,103 @@ def extract_coffee_list_items(
                 continue
             if line.startswith("## "):
                 break
-            entry = line.strip()
-            if not entry.startswith("- "):
+            if line.startswith("- "):
+                finalize_item(current)
+                current = None
+                in_variants = False
+                expecting_description = False
+                entry = line[2:].strip()
+                if not entry:
+                    continue
+                if entry.startswith("product_id:"):
+                    product_id = entry.split(":", 1)[1].strip()
+                    current = {
+                        "roaster": roaster_name,
+                        "product_id": product_id,
+                        "name": "",
+                        "url": "",
+                        "list_price": "",
+                        "badge": "",
+                        "description": "",
+                        "variant_lines": [],
+                    }
+                    continue
+                name = entry
+                url = ""
+                if entry.endswith(")") and " (" in entry:
+                    maybe_name, maybe_url = entry.rsplit(" (", 1)
+                    if maybe_url.startswith("http"):
+                        name = maybe_name.strip()
+                        url = maybe_url[:-1]
+                finalize_item(
+                    {
+                        "roaster": roaster_name,
+                        "product_id": "",
+                        "name": name,
+                        "url": url,
+                        "list_price": "",
+                        "badge": "",
+                        "description": "",
+                        "variant_lines": [],
+                    }
+                )
                 continue
-            entry = entry[2:].strip()
-            if not entry:
+            if current is None:
                 continue
-            name = entry
-            url = ""
-            if entry.endswith(")") and " (" in entry:
-                maybe_name, maybe_url = entry.rsplit(" (", 1)
-                if maybe_url.startswith("http"):
-                    name = maybe_name.strip()
-                    url = maybe_url[:-1]
-            items.append(
-                {
-                    "roaster": roaster_name,
-                    "name": name,
-                    "url": url,
-                    "list_price": "",
-                    "badge": "",
-                    "description": "",
-                }
-            )
+            stripped = line.strip()
+            if not stripped:
+                finalize_item(current)
+                current = None
+                in_variants = False
+                expecting_description = False
+                continue
+            if stripped.startswith("name:"):
+                current["name"] = stripped.split(":", 1)[1].strip()
+                in_variants = False
+                expecting_description = False
+                continue
+            if stripped.startswith("url:"):
+                current["url"] = stripped.split(":", 1)[1].strip()
+                in_variants = False
+                expecting_description = False
+                continue
+            if stripped.startswith("list price:"):
+                current["list_price"] = stripped.split(":", 1)[1].strip()
+                in_variants = False
+                expecting_description = False
+                continue
+            if stripped.startswith("badge:"):
+                current["badge"] = stripped.split(":", 1)[1].strip()
+                in_variants = False
+                expecting_description = False
+                continue
+            if stripped == "variants:":
+                in_variants = True
+                expecting_description = False
+                variant_lines = current.get("variant_lines")
+                if isinstance(variant_lines, list):
+                    variant_lines.append("  variants:")
+                continue
+            if in_variants and stripped.startswith("- "):
+                variant = stripped[2:].strip()
+                if variant:
+                    variant_lines = current.get("variant_lines")
+                    if isinstance(variant_lines, list):
+                        variant_lines.append(f"    - {variant}")
+                continue
+            if stripped.startswith("description:"):
+                in_variants = False
+                desc = stripped.split("description:", 1)[1].strip()
+                if desc:
+                    current["description"] = desc
+                    expecting_description = False
+                else:
+                    expecting_description = True
+                continue
+            if expecting_description:
+                current["description"] = stripped
+                expecting_description = False
+        finalize_item(current)
     if not items:
         logger.warning(
             "No coffee list items found while building digest-only new-digest."

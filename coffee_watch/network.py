@@ -299,8 +299,14 @@ async def fetch_product_page_text(
     headers: dict[str, str],
     semaphore: Optional[asyncio.Semaphore],
     page_cache: Optional[PageCache],
+    cache_usage: Optional[dict[str, int]] = None,
     jitter_multiplier: float = 1.0,
 ) -> str:
+    def record_cache_use() -> None:
+        if cache_usage is None:
+            return
+        cache_usage["hits"] = cache_usage.get("hits", 0) + 1
+
     cached = page_cache.get(product.url) if page_cache else None
     now = datetime.now(timezone.utc)
     if cached and settings.cache_max_age_s > 0:
@@ -312,6 +318,7 @@ async def fetch_product_page_text(
             age_s = (now - cached_at).total_seconds()
             if age_s < settings.cache_max_age_s:
                 logger.info("Using cached page text for %s", product.url)
+                record_cache_use()
                 return cached.scraped_text
 
     product_allowed = await robots_allows(
@@ -327,14 +334,18 @@ async def fetch_product_page_text(
             "Robots.txt disallows product page %s; skipping page fetch.",
             product.url,
         )
-        return cached.scraped_text if cached else ""
+        if cached:
+            record_cache_use()
+            return cached.scraped_text
+        return ""
 
     request_headers = dict(headers)
     if cached:
         if cached.etag:
             request_headers["If-None-Match"] = cached.etag
-        if cached.last_modified:
-            request_headers["If-Modified-Since"] = cached.last_modified
+        last_modified = cached.html_last_modified or cached.last_modified
+        if last_modified:
+            request_headers["If-Modified-Since"] = last_modified
 
     page_response = await fetch_text_with_jitter(
         http_client,
@@ -347,18 +358,30 @@ async def fetch_product_page_text(
     )
     if page_response is None:
         logger.warning("Request failed for product page %s", product.url)
-        return cached.scraped_text if cached else ""
+        if cached:
+            record_cache_use()
+            return cached.scraped_text
+        return ""
     if page_response.status_code == 304 and cached:
         logger.info("Not modified; using cached page text for %s", product.url)
+        html_last_modified = (
+            page_response.headers.get("last-modified")
+            or cached.html_last_modified
+            or cached.last_modified
+        )
         if page_cache:
             page_cache.upsert(
                 product.url,
                 now.isoformat(),
-                cached.last_modified,
+                html_last_modified,
                 cached.etag,
                 page_response.status_code,
                 cached.scraped_text,
+                shopify_updated_at=product.shopify_updated_at or cached.shopify_updated_at,
+                html_last_modified=html_last_modified,
+                cached_at=cached.cached_at,
             )
+        record_cache_use()
         return cached.scraped_text
     if page_response.status_code >= 400:
         logger.warning(
@@ -366,7 +389,10 @@ async def fetch_product_page_text(
             page_response.status_code,
             product.url,
         )
-        return cached.scraped_text if cached else ""
+        if cached:
+            record_cache_use()
+            return cached.scraped_text
+        return ""
     html = page_response.text
     page_text = extract_product_jsonld_text(html, settings.page_text_max_chars)
     if not page_text:
@@ -375,13 +401,16 @@ async def fetch_product_page_text(
         "Sanitized %s chars of page text for %s", len(page_text), product.url
     )
     if page_cache:
+        html_last_modified = page_response.headers.get("last-modified", "")
         page_cache.upsert(
             product.url,
             now.isoformat(),
-            page_response.headers.get("last-modified", ""),
+            html_last_modified,
             page_response.headers.get("etag", ""),
             page_response.status_code,
             page_text,
+            shopify_updated_at=product.shopify_updated_at,
+            html_last_modified=html_last_modified,
         )
     return page_text
 

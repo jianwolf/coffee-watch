@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from .models import ProductCandidate
 from .text_utils import format_variant_lines, sanitize_html_to_text, sanitize_prompt_field
 
@@ -17,17 +19,41 @@ def language_instruction(language: str) -> str:
     return "Use English for the entire report."
 
 
-def format_coffee_list(products: list[ProductCandidate]) -> str:
+def format_coffee_list(
+    products: list[ProductCandidate],
+    page_text_by_id: dict[str, str],
+    max_chars: int,
+) -> str:
     if not products:
         return ""
     lines = ["## Coffee list", ""]
     for product in products:
-        name = product.name.strip() or "Unknown"
-        url = product.url.strip()
-        if url:
-            lines.append(f"- {name} ({url})")
-        else:
-            lines.append(f"- {name}")
+        fields = sanitize_product_fields(product)
+        body_text = ""
+        if product.body_html:
+            body_text = sanitize_html_to_text(
+                product.body_html, max_chars, remove_boilerplate=False
+            )
+        body_text = sanitize_prompt_field(body_text, max_chars)
+        page_text = sanitize_prompt_field(
+            page_text_by_id.get(product.product_id, ""), max_chars
+        )
+        description_text = page_text or body_text
+        entry_lines = [
+            f"- product_id: {fields['product_id']}",
+            f"  name: {fields['name']}",
+            f"  url: {fields['url']}",
+        ]
+        if fields["list_price"]:
+            entry_lines.append(f"  list price: {fields['list_price']}")
+        if fields["list_badge"]:
+            entry_lines.append(f"  badge: {fields['list_badge']}")
+        entry_lines.extend(format_variant_lines(product.variants))
+        if description_text:
+            entry_lines.append("  description:")
+            entry_lines.append(f"  {description_text}")
+        entry_lines.append("")
+        lines.append("\n".join(entry_lines))
     return "\n".join(lines) + "\n"
 
 
@@ -123,7 +149,7 @@ def build_digest_prompt(
 
 
 def build_new_products_digest_prompt(
-    items: list[dict[str, str]],
+    items: list[dict[str, Any]],
     max_chars: int,
     language: str,
 ) -> str:
@@ -140,14 +166,17 @@ def build_new_products_digest_prompt(
     )
     sections: list[str] = [header]
     for item in items:
-        roaster = sanitize_prompt_field(item.get("roaster", ""), 200)
-        name = sanitize_prompt_field(item.get("name", ""), 200)
-        url = sanitize_prompt_field(item.get("url", ""), 400)
-        list_price = sanitize_prompt_field(item.get("list_price", ""), 40)
-        badge = sanitize_prompt_field(item.get("badge", ""), 40)
-        description = sanitize_prompt_field(item.get("description", ""), max_chars)
+        roaster = sanitize_prompt_field(str(item.get("roaster", "")), 200)
+        product_id = sanitize_prompt_field(str(item.get("product_id", "")), 200)
+        name = sanitize_prompt_field(str(item.get("name", "")), 200)
+        url = sanitize_prompt_field(str(item.get("url", "")), 400)
+        list_price = sanitize_prompt_field(str(item.get("list_price", "")), 40)
+        badge = sanitize_prompt_field(str(item.get("badge", "")), 40)
+        description = sanitize_prompt_field(str(item.get("description", "")), max_chars)
+        variant_lines = item.get("variant_lines")
         lines = [
             f"- roaster: {roaster}",
+            f"  product_id: {product_id}",
             f"  name: {name}",
             f"  url: {url}",
         ]
@@ -155,6 +184,8 @@ def build_new_products_digest_prompt(
             lines.append(f"  list price: {list_price}")
         if badge:
             lines.append(f"  badge: {badge}")
+        if isinstance(variant_lines, (list, tuple)):
+            lines.extend([line for line in variant_lines if isinstance(line, str)])
         if description:
             lines.append("  description:")
             lines.append(f"  {description}")

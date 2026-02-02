@@ -50,6 +50,7 @@ class ProductCandidate:
     list_badge: str = ""
     body_html: str = ""
     variants: tuple["VariantInfo", ...] = ()
+    shopify_updated_at: str = ""
 
 
 @dataclass(frozen=True)
