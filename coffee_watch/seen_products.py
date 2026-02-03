@@ -16,6 +16,8 @@ class SeenProduct:
     description: str
     first_seen_at: str
     shopify_updated_at: str
+    roaster: str
+    platform: str
 
 
 class SeenProducts:
@@ -33,11 +35,30 @@ class SeenProducts:
                 title TEXT NOT NULL,
                 description TEXT NOT NULL,
                 first_seen_at TEXT NOT NULL,
-                shopify_updated_at TEXT NOT NULL DEFAULT ''
+                shopify_updated_at TEXT NOT NULL DEFAULT '',
+                roaster TEXT NOT NULL DEFAULT '',
+                platform TEXT NOT NULL DEFAULT ''
             )
             """
         )
+        self._ensure_columns()
         self._conn.commit()
+
+    def _ensure_columns(self) -> None:
+        columns = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(seen_products)")
+        }
+        additions = {
+            "roaster": "TEXT NOT NULL DEFAULT ''",
+            "platform": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, ddl in additions.items():
+            if name in columns:
+                continue
+            self._conn.execute(
+                f"ALTER TABLE seen_products ADD COLUMN {name} {ddl}"
+            )
 
     @staticmethod
     def compute_hash(url: str, title: str, description: str) -> str:
@@ -46,7 +67,8 @@ class SeenProducts:
 
     def get(self, hash_value: str) -> Optional[SeenProduct]:
         cursor = self._conn.execute(
-            "SELECT hash, url, title, description, first_seen_at, shopify_updated_at "
+            "SELECT hash, url, title, description, first_seen_at, "
+            "shopify_updated_at, roaster, platform "
             "FROM seen_products WHERE hash = ?",
             (hash_value,),
         )
@@ -60,6 +82,8 @@ class SeenProducts:
             description=row[3],
             first_seen_at=row[4],
             shopify_updated_at=row[5],
+            roaster=row[6],
+            platform=row[7],
         )
 
     def record(
@@ -70,13 +94,15 @@ class SeenProducts:
         description: str,
         first_seen_at: str,
         shopify_updated_at: str = "",
+        roaster: str = "",
+        platform: str = "",
     ) -> None:
         try:
             self._conn.execute(
                 """
                 INSERT INTO seen_products
-                    (hash, url, title, description, first_seen_at, shopify_updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (hash, url, title, description, first_seen_at, shopify_updated_at, roaster, platform)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(hash) DO UPDATE SET
                     url=excluded.url,
                     title=excluded.title,
@@ -85,6 +111,16 @@ class SeenProducts:
                         WHEN excluded.shopify_updated_at != ''
                         THEN excluded.shopify_updated_at
                         ELSE seen_products.shopify_updated_at
+                    END,
+                    roaster=CASE
+                        WHEN excluded.roaster != ''
+                        THEN excluded.roaster
+                        ELSE seen_products.roaster
+                    END,
+                    platform=CASE
+                        WHEN excluded.platform != ''
+                        THEN excluded.platform
+                        ELSE seen_products.platform
                     END
                 """,
                 (
@@ -94,6 +130,8 @@ class SeenProducts:
                     description,
                     first_seen_at,
                     shopify_updated_at,
+                    roaster,
+                    platform,
                 ),
             )
             self._conn.commit()

@@ -20,7 +20,12 @@ from .constants import USER_AGENT
 from .gemini import evaluate_roaster_markdown, format_grounding_metadata, generate_digest_markdown
 from .logging_utils import setup_logging
 from .models import ProductCandidate, RoasterSource
-from .network import fetch_product_page_text, fetch_products_for_roaster, merge_headers
+from .network import (
+    fetch_product_page_text,
+    fetch_products_for_roaster,
+    fetch_wix_product_sitemap_lastmods,
+    merge_headers,
+)
 from .seen_products import SeenProducts
 from .parsing import load_denylist, load_roasters
 from .prompts import (
@@ -76,15 +81,25 @@ def _parse_http_date(value: str) -> Optional[date]:
     return parsed.astimezone(timezone.utc).date()
 
 
+def _parse_wix_lastmod(value: str) -> Optional[date]:
+    return _parse_http_date(value) or _parse_iso_date(value)
+
+
 def _resolve_update_date(
-    product: ProductCandidate, html_last_modified: str, seen_at: str
+    product: ProductCandidate,
+    http_last_modified: str,
+    wix_lastmod: str,
+    seen_at: str,
 ) -> tuple[Optional[date], str]:
     published_date = _parse_iso_date(product.shopify_published_at)
     if published_date:
         return published_date, "shopify_published_at"
-    html_date = _parse_http_date(html_last_modified)
-    if html_date:
-        return html_date, "html_last_modified"
+    http_date = _parse_http_date(http_last_modified)
+    if http_date:
+        return http_date, "http_last_modified"
+    wix_date = _parse_wix_lastmod(wix_lastmod)
+    if wix_date:
+        return wix_date, "wix_lastmod"
     seen_date = _parse_iso_date(seen_at)
     if seen_date:
         return seen_date, "seen_at"
@@ -96,12 +111,15 @@ def classify_new_products(
     run_day: date,
     seen_products: SeenProducts,
     descriptions_by_url: dict[str, str],
-    html_last_modified_by_url: dict[str, str],
+    http_last_modified_by_url: dict[str, str],
+    wix_lastmod_by_url: dict[str, str],
+    platform: str,
 ) -> tuple[set[str], dict[str, int], int, int]:
     new_urls: set[str] = set()
     by_source = {
         "shopify_published_at": 0,
-        "html_last_modified": 0,
+        "http_last_modified": 0,
+        "wix_lastmod": 0,
         "seen_at": 0,
     }
     undated = 0
@@ -112,10 +130,11 @@ def classify_new_products(
         seen_hash = seen_products.compute_hash(product.url, product.name, description)
         seen_entry = seen_products.get(seen_hash)
         seen_at = seen_entry.first_seen_at if seen_entry else ""
-        html_last_modified = html_last_modified_by_url.get(product.url, "")
+        http_last_modified = http_last_modified_by_url.get(product.url, "")
+        wix_lastmod = wix_lastmod_by_url.get(product.url, "")
 
         updated_date, source = _resolve_update_date(
-            product, html_last_modified, seen_at
+            product, http_last_modified, wix_lastmod, seen_at
         )
         if updated_date is None:
             undated += 1
@@ -129,6 +148,8 @@ def classify_new_products(
             description,
             now_iso,
             shopify_updated_at=product.shopify_updated_at,
+            roaster=product.source,
+            platform=platform,
         )
 
         if updated_date != run_day:
@@ -296,7 +317,8 @@ async def _process_roaster_inner(
     )
 
     page_text_by_id = {product.product_id: "" for product in new_products}
-    html_last_modified_by_url: dict[str, str] = {}
+    http_last_modified_by_url: dict[str, str] = {}
+    wix_lastmod_by_url: dict[str, str] = {}
     page_fetch_count = 0
 
     def write_report(
@@ -335,6 +357,26 @@ async def _process_roaster_inner(
             descriptions[product.url] = description
         return descriptions
 
+    if roaster.platform == "wix":
+        sitemap_headers = merge_headers(
+            {"User-Agent": USER_AGENT},
+            roaster.product_page_headers,
+            logger,
+            f"{roaster.name} sitemap",
+        )
+        sitemap_lastmods = await fetch_wix_product_sitemap_lastmods(
+            http_client,
+            roaster,
+            settings,
+            robots_cache,
+            logger,
+            sitemap_headers,
+            http_semaphore,
+            jitter_multiplier=roaster.jitter_multiplier,
+        )
+        if sitemap_lastmods:
+            wix_lastmod_by_url.update(sitemap_lastmods)
+
     if settings.fetch_only:
         logger.info(
             "Fetch-only mode enabled; skipping product page fetches and Gemini."
@@ -345,7 +387,9 @@ async def _process_roaster_inner(
             run_day,
             seen_products,
             descriptions_by_url,
-            html_last_modified_by_url,
+            http_last_modified_by_url,
+            wix_lastmod_by_url,
+            roaster.platform,
         )
         report_path = None
         if settings.save_report:
@@ -358,13 +402,15 @@ async def _process_roaster_inner(
             write_report(report_path, note="Fetch-only mode enabled; no LLM output.")
         logger.info(
             "New products for %s (dated %s): %d "
-            "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+            "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
+            "seen_at=%d, "
             "undated=%d, not_today=%d]. Page text fetched for %d products.",
             roaster.name,
             run_id,
             len(new_urls),
             by_source["shopify_published_at"],
-            by_source["html_last_modified"],
+            by_source["http_last_modified"],
+            by_source["wix_lastmod"],
             by_source["seen_at"],
             undated,
             not_today,
@@ -405,7 +451,7 @@ async def _process_roaster_inner(
                     text, roaster.page_text_stop_phrases
                 )
                 if last_modified:
-                    html_last_modified_by_url[product.url] = last_modified
+                    http_last_modified_by_url[product.url] = last_modified
     else:
         logger.info(
             "Skipping product page fetches for %s (platform shopify).", roaster.name
@@ -417,7 +463,9 @@ async def _process_roaster_inner(
         run_day,
         seen_products,
         descriptions_by_url,
-        html_last_modified_by_url,
+        http_last_modified_by_url,
+        wix_lastmod_by_url,
+        roaster.platform,
     )
     new_items: list[dict[str, Any]] = []
     if settings.save_report and new_urls:
@@ -469,13 +517,15 @@ async def _process_roaster_inner(
             write_report(report_path, note="Gemini skipped by configuration.")
         logger.info(
             "New products for %s (dated %s): %d "
-            "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+            "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
+            "seen_at=%d, "
             "undated=%d, not_today=%d]. Page text fetched for %d products.",
             roaster.name,
             run_id,
             len(new_urls),
             by_source["shopify_published_at"],
-            by_source["html_last_modified"],
+            by_source["http_last_modified"],
+            by_source["wix_lastmod"],
             by_source["seen_at"],
             undated,
             not_today,
@@ -509,13 +559,15 @@ async def _process_roaster_inner(
             )
         logger.info(
             "New products for %s (dated %s): %d "
-            "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+            "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
+            "seen_at=%d, "
             "undated=%d, not_today=%d]. Page text fetched for %d products.",
             roaster.name,
             run_id,
             len(new_urls),
             by_source["shopify_published_at"],
-            by_source["html_last_modified"],
+            by_source["http_last_modified"],
+            by_source["wix_lastmod"],
             by_source["seen_at"],
             undated,
             not_today,
@@ -534,13 +586,15 @@ async def _process_roaster_inner(
         report_path = None
     logger.info(
         "New products for %s (dated %s): %d "
-        "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+        "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
+        "seen_at=%d, "
         "undated=%d, not_today=%d]. Page text fetched for %d products.",
         roaster.name,
         run_id,
         len(new_urls),
         by_source["shopify_published_at"],
-        by_source["html_last_modified"],
+        by_source["http_last_modified"],
+        by_source["wix_lastmod"],
         by_source["seen_at"],
         undated,
         not_today,
@@ -612,7 +666,8 @@ async def run(settings: Settings) -> int:
             try:
                 digest_products: list[ProductCandidate] = []
                 descriptions_by_url: dict[str, str] = {}
-                html_last_modified_by_url: dict[str, str] = {}
+                http_last_modified_by_url: dict[str, str] = {}
+                wix_lastmod_by_url: dict[str, str] = {}
                 for item in new_items:
                     url = str(item.get("url", "") or "").strip()
                     product = ProductCandidate(
@@ -637,7 +692,9 @@ async def run(settings: Settings) -> int:
                     run_day,
                     seen_products,
                     descriptions_by_url,
-                    html_last_modified_by_url,
+                    http_last_modified_by_url,
+                    wix_lastmod_by_url,
+                    "unknown",
                 )
                 filtered_new_items = [
                     item
@@ -646,12 +703,14 @@ async def run(settings: Settings) -> int:
                 ]
                 logger.info(
                     "Digest-only new products (dated %s): %d "
-                    "[shopify_published_at=%d, html_last_modified=%d, seen_at=%d, "
+                    "[shopify_published_at=%d, http_last_modified=%d, "
+                    "wix_lastmod=%d, seen_at=%d, "
                     "undated=%d, not_today=%d].",
                     run_id,
                     len(filtered_new_items),
                     by_source["shopify_published_at"],
-                    by_source["html_last_modified"],
+                    by_source["http_last_modified"],
+                    by_source["wix_lastmod"],
                     by_source["seen_at"],
                     undated,
                     not_today,

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlsplit
@@ -17,7 +18,7 @@ from .models import PaginationConfig, ProductCandidate, ProductFieldConfig, Roas
 from .parsing import parse_products_json, parse_products_response
 from .reporting import log_products_json_snippet, save_products_json, save_products_json_pretty
 from .text_utils import extract_product_jsonld_text, sanitize_html_to_text
-from .url_utils import build_url_with_params
+from .url_utils import build_url_with_params, canonicalize_url, matches_patterns
 
 
 async def jitter_sleep(min_s: float, max_s: float) -> None:
@@ -339,8 +340,161 @@ async def fetch_product_page_text(
     logger.info(
         "Sanitized %s chars of page text for %s", len(page_text), product.url
     )
-    html_last_modified = page_response.headers.get("last-modified", "")
-    return page_text, html_last_modified
+    http_last_modified = page_response.headers.get("last-modified", "")
+    return page_text, http_last_modified
+
+
+def _strip_xml_namespace(tag: str) -> str:
+    if "}" in tag:
+        return tag.split("}", 1)[1]
+    return tag
+
+
+def _find_xml_text(node: Optional[ET.Element], tag: str) -> str:
+    if node is None:
+        return ""
+    child = node.find(f".//{{*}}{tag}")
+    if child is None or child.text is None:
+        return ""
+    return child.text.strip()
+
+
+def _normalize_sitemap_loc(loc: str) -> list[str]:
+    loc = loc.strip()
+    if not loc:
+        return []
+    canonical = canonicalize_url(loc)
+    if not canonical:
+        return []
+    urls = [canonical]
+    parts = urlsplit(canonical)
+    if parts.path.endswith("/") and parts.path != "/":
+        trimmed = canonical.rstrip("/")
+        if trimmed not in urls:
+            urls.append(trimmed)
+    return urls
+
+
+def _parse_sitemap_xml(xml_text: str) -> tuple[dict[str, str], list[str]]:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return {}, []
+
+    tag = _strip_xml_namespace(root.tag).lower()
+    if tag == "urlset":
+        lastmods: dict[str, str] = {}
+        for url_node in root.findall(".//{*}url"):
+            loc = _find_xml_text(url_node, "loc")
+            lastmod = _find_xml_text(url_node, "lastmod")
+            if not loc or not lastmod:
+                continue
+            for normalized in _normalize_sitemap_loc(loc):
+                lastmods[normalized] = lastmod
+        return lastmods, []
+
+    if tag == "sitemapindex":
+        sitemaps: list[str] = []
+        for sitemap_node in root.findall(".//{*}sitemap"):
+            loc = _find_xml_text(sitemap_node, "loc")
+            if loc:
+                sitemaps.append(loc)
+        return {}, sitemaps
+
+    return {}, []
+
+
+async def fetch_wix_product_sitemap_lastmods(
+    http_client: httpx.AsyncClient,
+    roaster: RoasterSource,
+    settings: Settings,
+    robots_cache: dict[str, RobotFileParser],
+    logger: logging.Logger,
+    headers: dict[str, str],
+    semaphore: Optional[asyncio.Semaphore],
+    jitter_multiplier: float = 1.0,
+) -> dict[str, str]:
+    base = roaster.base_url if roaster.base_url.endswith("/") else f"{roaster.base_url}/"
+    store_products_sitemap = urljoin(base, "store-products-sitemap.xml")
+    index_sitemap = urljoin(base, "sitemap.xml")
+
+    def _filter_lastmods(lastmods: dict[str, str]) -> dict[str, str]:
+        if not lastmods:
+            return {}
+        include = roaster.product_link_patterns
+        exclude = roaster.product_link_exclude_patterns
+        if not include and not exclude:
+            return lastmods
+        return {
+            url: lastmod
+            for url, lastmod in lastmods.items()
+            if matches_patterns(url, include, exclude)
+        }
+
+    async def _fetch(url: str) -> tuple[dict[str, str], list[str]]:
+        allowed = await robots_allows(
+            http_client,
+            url,
+            settings,
+            robots_cache,
+            logger,
+            jitter_multiplier=jitter_multiplier,
+        )
+        if not allowed:
+            logger.warning("Robots.txt disallows sitemap %s; skipping.", url)
+            return {}, []
+        response = await fetch_text_with_jitter(
+            http_client,
+            url,
+            settings,
+            logger,
+            headers=headers,
+            semaphore=semaphore,
+            jitter_multiplier=jitter_multiplier,
+        )
+        if response is None:
+            logger.warning("Request failed for sitemap %s", url)
+            return {}, []
+        if response.status_code >= 400:
+            logger.info("Sitemap not available (%s): %s", response.status_code, url)
+            return {}, []
+        return _parse_sitemap_xml(response.text)
+
+    async def _collect(url: str) -> dict[str, str]:
+        queue = [url]
+        seen: set[str] = set()
+        combined: dict[str, str] = {}
+        while queue:
+            current = queue.pop(0)
+            if current in seen:
+                continue
+            seen.add(current)
+            lastmods, children = await _fetch(current)
+            combined.update(_filter_lastmods(lastmods))
+            for child in children:
+                if "store-products-sitemap" in child.lower():
+                    queue.append(child)
+            if len(seen) >= 8:
+                break
+        return combined
+
+    lastmods = await _collect(store_products_sitemap)
+    if lastmods:
+        logger.info(
+            "Loaded %d Wix sitemap lastmod entries from %s",
+            len(lastmods),
+            store_products_sitemap,
+        )
+        return lastmods
+
+    lastmods = await _collect(index_sitemap)
+    if lastmods:
+        logger.info(
+            "Loaded %d Wix sitemap lastmod entries from %s",
+            len(lastmods),
+            index_sitemap,
+        )
+    return lastmods
 
 
 def merge_headers(

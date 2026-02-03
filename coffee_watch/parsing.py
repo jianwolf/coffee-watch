@@ -146,16 +146,12 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
         except json.JSONDecodeError as exc:
             logger.error("Invalid roasters file %s: %s", settings.roasters_path, exc)
     else:
-        logger.warning("Roasters file not found: %s", settings.roasters_path)
+        logger.error("Roasters file not found: %s", settings.roasters_path)
+        return []
 
     if not data:
-        return [
-            RoasterSource(
-                name="Example Roaster",
-                base_url="https://example.com",
-                products_path="/products.json",
-            )
-        ]
+        logger.error("Roasters file %s is empty or invalid.", settings.roasters_path)
+        return []
 
     roasters: list[RoasterSource] = []
     for entry in data:
