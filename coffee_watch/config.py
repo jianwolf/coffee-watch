@@ -11,6 +11,7 @@ from typing import Any, Optional
 @dataclass(frozen=True)
 class Settings:
     model: str
+    digest_model: str
     gemini_timeout_s: float
     http_timeout_s: float
     jitter_min_s: float
@@ -27,6 +28,7 @@ class Settings:
     save_pretty_products_json: bool
     save_raw_products_json: bool
     save_report: bool
+    new_products_digest: bool
     seen_db_path: Path
     roasters_path: Path
     denylist_path: Path
@@ -38,7 +40,8 @@ class Settings:
     @staticmethod
     def defaults() -> "Settings":
         return Settings(
-            model="gemini-3-pro-preview",
+            model="gemini-3-flash-preview",
+            digest_model="gemini-3-pro-preview",
             gemini_timeout_s=600.0,
             http_timeout_s=20.0,
             jitter_min_s=0.7,
@@ -55,6 +58,7 @@ class Settings:
             save_pretty_products_json=False,
             save_raw_products_json=False,
             save_report=True,
+            new_products_digest=False,
             seen_db_path=Path("logs/seen_products.db"),
             roasters_path=Path("config/roasters.json"),
             denylist_path=Path("config/denylist.txt"),
@@ -80,7 +84,12 @@ def add_bool_flag(
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Coffee Watch monitoring agent")
     parser.add_argument("--config", type=Path, help="Path to JSON config file")
-    parser.add_argument("--model", type=str, help="Gemini model ID")
+    parser.add_argument(
+        "--model", type=str, help="Gemini model ID for roaster reports"
+    )
+    parser.add_argument(
+        "--digest-model", type=str, help="Gemini model ID for digest generation"
+    )
     parser.add_argument(
         "--gemini-timeout-s",
         type=float,
@@ -121,6 +130,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     add_bool_flag(parser, "save-raw-products-json", "save raw products JSON", None)
     add_bool_flag(parser, "save-report", "save Gemini reports", None)
+    add_bool_flag(
+        parser,
+        "new-products-digest",
+        "generate new-products digest report",
+        None,
+    )
     parser.add_argument("--seen-db-path", type=Path, help="Path to SQLite seen DB")
     parser.add_argument("--roasters-path", type=Path, help="Path to roasters JSON")
     parser.add_argument("--denylist-path", type=Path, help="Path to denylist file")
@@ -175,6 +190,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
 
     return Settings(
         model=str(pick_value("model")),
+        digest_model=str(pick_value("digest_model")),
         gemini_timeout_s=float(pick_value("gemini_timeout_s")),
         http_timeout_s=float(pick_value("http_timeout_s")),
         jitter_min_s=float(pick_value("jitter_min_s")),
@@ -191,6 +207,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         save_pretty_products_json=bool(pick_value("save_pretty_products_json")),
         save_raw_products_json=bool(pick_value("save_raw_products_json")),
         save_report=bool(pick_value("save_report")),
+        new_products_digest=bool(pick_value("new_products_digest")),
         seen_db_path=pick_seen_db_path(),
         roasters_path=pick_path("roasters_path"),
         denylist_path=pick_path("denylist_path"),

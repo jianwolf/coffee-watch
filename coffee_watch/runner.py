@@ -166,6 +166,7 @@ def build_digest_jobs(
     new_items: list[dict[str, Any]],
     language: str,
     max_chars: int,
+    include_new_digest: bool,
 ) -> list[DigestJob]:
     jobs: list[DigestJob] = []
     if reports:
@@ -176,7 +177,7 @@ def build_digest_jobs(
                 build_roaster_ratings_digest_prompt(reports, language),
             )
         )
-    if new_items:
+    if include_new_digest and new_items:
         jobs.append(
             DigestJob(
                 "new-digest",
@@ -218,7 +219,7 @@ async def generate_digest_reports(
     tasks = [
         generate_digest_markdown(
             genai_client,
-            settings.model,
+            settings.digest_model,
             job.prompt,
             logger,
             settings.gemini_timeout_s,
@@ -617,6 +618,15 @@ async def run(settings: Settings) -> int:
 
     assets_dir = settings.log_path.parent / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "Using Gemini models: roaster=%s digest=%s",
+        settings.model,
+        settings.digest_model,
+    )
+    logger.info(
+        "New-products digest: %s",
+        "enabled" if settings.new_products_digest else "disabled",
+    )
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -722,6 +732,7 @@ async def run(settings: Settings) -> int:
             filtered_new_items,
             language,
             settings.batch_page_text_max_chars,
+            settings.new_products_digest,
         )
         save_digest_prompts(
             digest_jobs,
@@ -792,6 +803,7 @@ async def run(settings: Settings) -> int:
             new_items,
             language,
             settings.batch_page_text_max_chars,
+            settings.new_products_digest,
         )
         if digest_jobs:
             save_digest_prompts(

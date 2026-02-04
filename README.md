@@ -70,7 +70,8 @@ Example `config/settings.json`:
 ```json
 {
   "language": "zh",
-  "model": "gemini-3-pro-preview",
+  "model": "gemini-3-flash-preview",
+  "digest_model": "gemini-3-pro-preview",
   "gemini_timeout_s": 600.0,
   "http_concurrency": 1,
   "http_timeout_s": 20.0,
@@ -86,6 +87,7 @@ Example `config/settings.json`:
   "save_pretty_products_json": false,
   "save_raw_products_json": false,
   "save_report": true,
+  "new_products_digest": false,
   "seen_db_path": "logs/seen_products.db",
   "roasters_path": "config/roasters.json",
   "denylist_path": "config/denylist.txt",
@@ -100,8 +102,10 @@ Notes:
 - Descriptions are extracted from product `body_html` (when available).
 - Shopify sources rely on `products.json` and skip per-product page fetches.
 - `gemini_timeout_s` controls Gemini request timeouts in seconds (0 = no timeout).
+- `model` applies to per-roaster reports; `digest_model` applies to digest generation.
+- `new_products_digest` toggles the new-products digest report (default `false`).
 - Reports are saved as `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-digest.md`, and `YYYYMMDD-roaster-digest.md` (UTC date).
-- A new-products digest is saved as `YYYYMMDD-new-digest.md` when new coffees are detected.
+- A new-products digest is saved as `YYYYMMDD-new-digest.md` when enabled and new coffees are detected.
 - Seen products are stored in `logs/seen_products.db`.
 
 ## Configuration
