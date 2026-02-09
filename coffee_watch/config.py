@@ -24,6 +24,7 @@ class Settings:
     fetch_only: bool
     skip_gemini: bool
     digest_only: bool
+    resume: bool
     save_prompt: bool
     save_pretty_products_json: bool
     save_raw_products_json: bool
@@ -54,6 +55,7 @@ class Settings:
             fetch_only=False,
             skip_gemini=False,
             digest_only=False,
+            resume=False,
             save_prompt=False,
             save_pretty_products_json=False,
             save_raw_products_json=False,
@@ -124,6 +126,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     add_bool_flag(parser, "fetch-only", "fetch only (no Gemini calls)", None)
     add_bool_flag(parser, "skip-gemini", "skip Gemini calls", None)
     add_bool_flag(parser, "digest-only", "generate digest only (no scraping)", None)
+    add_bool_flag(
+        parser,
+        "resume",
+        "resume mode: retry missing/failed roaster reports from today, then regenerate digests",
+        None,
+    )
     add_bool_flag(parser, "save-prompt", "save Gemini prompt files", None)
     add_bool_flag(
         parser, "save-pretty-products-json", "save pretty products JSON", None
@@ -203,6 +211,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         fetch_only=bool(pick_value("fetch_only")),
         skip_gemini=bool(pick_value("skip_gemini")),
         digest_only=bool(pick_value("digest_only")),
+        resume=bool(pick_value("resume")),
         save_prompt=bool(pick_value("save_prompt")),
         save_pretty_products_json=bool(pick_value("save_pretty_products_json")),
         save_raw_products_json=bool(pick_value("save_raw_products_json")),
