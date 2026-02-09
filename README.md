@@ -19,7 +19,7 @@ A low-frequency monitoring agent that checks specialty coffee roasters for new r
 2. Fetch product lists and (optionally) product pages with robots.txt compliance.
 3. Track first-seen products in SQLite and classify new items by publish date, page headers, or first-seen timestamp.
 4. Build a batch prompt from product metadata and sanitized page text.
-5. Generate a per-roaster report, a full digest, a new-products digest, and a roaster ratings digest.
+5. Generate a per-roaster report, a full digest, a new-products digest (past 7 days), and a roaster ratings digest.
 6. If any roaster report failed, append a `## Report Generation Failures` section to digest outputs.
 
 ## Code structure
@@ -53,7 +53,7 @@ Override on the CLI:
 python main.py --language zh --http-concurrency 1 --skip-gemini
 python main.py --gemini-timeout-s 600
 python main.py --seen-db-path logs/seen_products.db
-python main.py --digest-only        # generate digests from today's reports only (UTC)
+python main.py --digest-only        # regenerate digests from today's roaster reports (UTC)
 python main.py --resume             # retry only missing/failed reports today, then rebuild digests
 ```
 
@@ -91,7 +91,7 @@ Example `config/settings.json`:
   "save_pretty_products_json": false,
   "save_raw_products_json": false,
   "save_report": true,
-  "new_products_digest": false,
+  "new_products_digest": true,
   "seen_db_path": "logs/seen_products.db",
   "roasters_path": "config/roasters.json",
   "denylist_path": "config/denylist.txt",
@@ -107,12 +107,14 @@ Notes:
 - Shopify sources rely on `products.json` and skip per-product page fetches.
 - `gemini_timeout_s` controls Gemini request timeouts in seconds (0 = no timeout).
 - `model` applies to per-roaster reports; `digest_model` applies to digest generation.
-- `new_products_digest` toggles the new-products digest report (default `false`).
+- `new_products_digest` toggles the new-products digest report (default `true`).
 - Per-roaster Gemini generation retries up to 10 times before writing a hard-failure note.
 - `resume` retries only missing/failed roaster reports for today (UTC), then regenerates digests from all today reports.
+- The new-products digest includes coffees discovered in the last 7 days (inclusive, UTC run day).
+- `--digest-only` regenerates digests from today's existing roaster reports and does not update `logs/seen_products.db`.
 - Digest outputs append `## Report Generation Failures` with lines like `xxx roaster report generation has failed` when any roaster report is missing/failed.
-- Reports are saved as `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-digest.md`, and `YYYYMMDD-roaster-digest.md` (UTC date).
-- A new-products digest is saved as `YYYYMMDD-new-digest.md` when enabled and new coffees are detected.
+- Reports are saved as `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-z-digest.md`, and `YYYYMMDD-z-roaster-digest.md` (UTC date).
+- A new-products digest is saved as `YYYYMMDD-z-new-digest.md` when enabled and matching coffees are detected.
 - Seen products are stored in `logs/seen_products.db`.
 
 ## Configuration

@@ -16,13 +16,13 @@
 - `pip install -r requirements.txt` — install dependencies.
 - `python main.py` — run the monitor with defaults.
 - `python main.py --help` — view CLI flags.
-- `python main.py --digest-only` — generate digest from existing reports only.
+- `python main.py --digest-only` — regenerate digests from existing today reports only.
 - `python main.py --config config/settings.json --language en` — run with config overrides.
 
 ## Coding Style & Naming Conventions
 - Python code uses 4-space indentation and type hints where helpful.
 - Keep functions small and single-purpose; prefer descriptive names (`fetch_products_for_roaster`, `build_batch_prompt`).
-- File naming: outputs use `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-digest.md`, and `YYYYMMDD-new-digest.md` (UTC date).
+- File naming: outputs use `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-z-digest.md`, `YYYYMMDD-z-roaster-digest.md`, and `YYYYMMDD-z-new-digest.md` (UTC date).
 - Avoid introducing non-ASCII text unless the file already uses it (e.g., prompt language strings).
 
 ## Testing Guidelines

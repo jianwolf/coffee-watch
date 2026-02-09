@@ -60,7 +60,7 @@ class Settings:
             save_pretty_products_json=False,
             save_raw_products_json=False,
             save_report=True,
-            new_products_digest=False,
+            new_products_digest=True,
             seen_db_path=Path("logs/seen_products.db"),
             roasters_path=Path("config/roasters.json"),
             denylist_path=Path("config/denylist.txt"),

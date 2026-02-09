@@ -5,7 +5,7 @@ import logging
 import logging.handlers
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -56,6 +56,7 @@ class DigestJob:
 
 ROASTER_GEMINI_MAX_ATTEMPTS = 10
 ROASTER_REPORT_FAILURE_SUFFIX = "roaster report generation has failed"
+NEW_PRODUCTS_WINDOW_DAYS = 7
 
 
 def _build_roaster_failure_line(roaster_name: str) -> str:
@@ -126,10 +127,29 @@ def _report_indicates_roaster_failure(text: str) -> bool:
     return False
 
 
+def _digest_report_name(job_name: str) -> str:
+    names = {
+        "digest": "z-digest",
+        "new-digest": "z-new-digest",
+        "roaster-digest": "z-roaster-digest",
+    }
+    return names.get(job_name, f"z-{job_name}")
+
+
+def _digest_report_filenames(run_id: str) -> set[str]:
+    current_names = {
+        _digest_report_name("digest"),
+        _digest_report_name("new-digest"),
+        _digest_report_name("roaster-digest"),
+    }
+    legacy_names = {"digest", "new-digest", "roaster-digest"}
+    all_names = current_names | legacy_names
+    return {f"{run_id}-{name}.md" for name in all_names}
+
+
 def _today_roaster_report_paths(reports_dir: Path, run_id: str) -> list[Path]:
-    paths = [
-        path for path in reports_dir.glob(f"{run_id}-*.md") if "-digest" not in path.name
-    ]
+    digest_files = _digest_report_filenames(run_id)
+    paths = [path for path in reports_dir.glob(f"{run_id}-*.md") if path.name not in digest_files]
     return sorted(paths, key=lambda path: path.name)
 
 
@@ -244,6 +264,8 @@ def classify_new_products(
     http_last_modified_by_url: dict[str, str],
     wix_lastmod_by_url: dict[str, str],
     platform: str,
+    window_days: int = NEW_PRODUCTS_WINDOW_DAYS,
+    persist_seen: bool = True,
 ) -> tuple[set[str], dict[str, int], int, int]:
     new_urls: set[str] = set()
     by_source = {
@@ -253,8 +275,10 @@ def classify_new_products(
         "seen_at": 0,
     }
     undated = 0
-    not_today = 0
-    now_iso = datetime.now(timezone.utc).isoformat()
+    outside_window = 0
+    now_iso = datetime.now(timezone.utc).isoformat() if persist_seen else ""
+    days = max(1, window_days)
+    window_start = run_day - timedelta(days=days - 1)
     for product in products:
         description = descriptions_by_url.get(product.url, "")
         seen_hash = seen_products.compute_hash(product.url, product.name, description)
@@ -268,27 +292,32 @@ def classify_new_products(
         )
         if updated_date is None:
             undated += 1
-            source = "undated"
-            updated_date = run_day
+            if persist_seen:
+                source = "undated"
+                updated_date = run_day
+            else:
+                outside_window += 1
+                continue
 
-        seen_products.record(
-            seen_hash,
-            product.url,
-            product.name,
-            description,
-            now_iso,
-            shopify_updated_at=product.shopify_updated_at,
-            roaster=product.source,
-            platform=platform,
-        )
+        if persist_seen:
+            seen_products.record(
+                seen_hash,
+                product.url,
+                product.name,
+                description,
+                now_iso,
+                shopify_updated_at=product.shopify_updated_at,
+                roaster=product.source,
+                platform=platform,
+            )
 
-        if updated_date != run_day:
-            not_today += 1
+        if updated_date < window_start or updated_date > run_day:
+            outside_window += 1
             continue
         new_urls.add(product.url)
         if source in by_source:
             by_source[source] += 1
-    return new_urls, by_source, undated, not_today
+    return new_urls, by_source, undated, outside_window
 
 
 def build_filtered_new_items_for_digest(
@@ -297,6 +326,9 @@ def build_filtered_new_items_for_digest(
     settings: Settings,
     logger: logging.Logger,
     mode_label: str,
+    *,
+    window_days: int = NEW_PRODUCTS_WINDOW_DAYS,
+    persist_seen: bool = False,
 ) -> list[dict[str, Any]]:
     new_items = extract_coffee_list_items(reports, logger)
     filtered_new_items = new_items
@@ -326,7 +358,7 @@ def build_filtered_new_items_for_digest(
             digest_products.append(product)
             descriptions_by_url[url] = str(item.get("description", "") or "")
         run_day = datetime.strptime(run_id, "%Y%m%d").date()
-        new_urls, by_source, undated, not_today = classify_new_products(
+        new_urls, by_source, undated, outside_window = classify_new_products(
             digest_products,
             run_day,
             seen_products,
@@ -334,6 +366,8 @@ def build_filtered_new_items_for_digest(
             http_last_modified_by_url,
             wix_lastmod_by_url,
             "unknown",
+            window_days=window_days,
+            persist_seen=persist_seen,
         )
         filtered_new_items = [
             item
@@ -341,11 +375,12 @@ def build_filtered_new_items_for_digest(
             if product.url and product.url in new_urls
         ]
         logger.info(
-            "%s new products (dated %s): %d "
+            "%s new products (last %d days ending %s UTC): %d "
             "[shopify_published_at=%d, http_last_modified=%d, "
             "wix_lastmod=%d, seen_at=%d, "
-            "undated=%d, not_today=%d].",
+            "undated=%d, outside_window=%d].",
             mode_label,
+            max(1, window_days),
             run_id,
             len(filtered_new_items),
             by_source["shopify_published_at"],
@@ -353,7 +388,7 @@ def build_filtered_new_items_for_digest(
             by_source["wix_lastmod"],
             by_source["seen_at"],
             undated,
-            not_today,
+            outside_window,
         )
     finally:
         seen_products.close()
@@ -433,7 +468,7 @@ async def generate_digest_reports(
         output_text = _append_failed_roaster_lines_to_digest(digest or "", failed_names)
         if output_text and settings.save_report:
             digest_path = report_file_path(
-                settings.reports_dir, job.name, run_id, None, "md"
+                settings.reports_dir, _digest_report_name(job.name), run_id, None, "md"
             )
             digest_path.write_text(output_text, encoding="utf-8")
             logger.info("Saved %s report to %s", job.name, digest_path)
@@ -589,7 +624,7 @@ async def _process_roaster_inner(
             "Fetch-only mode enabled; skipping product page fetches and Gemini."
         )
         descriptions_by_url = build_descriptions_by_url()
-        new_urls, by_source, undated, not_today = classify_new_products(
+        new_urls, by_source, undated, outside_window = classify_new_products(
             new_products,
             run_day,
             seen_products,
@@ -597,6 +632,8 @@ async def _process_roaster_inner(
             http_last_modified_by_url,
             wix_lastmod_by_url,
             roaster.platform,
+            window_days=NEW_PRODUCTS_WINDOW_DAYS,
+            persist_seen=True,
         )
         report_path = None
         if settings.save_report:
@@ -608,11 +645,12 @@ async def _process_roaster_inner(
             report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
             write_report(report_path, note="Fetch-only mode enabled; no LLM output.")
         logger.info(
-            "New products for %s (dated %s): %d "
+            "New products for %s (last %d days ending %s UTC): %d "
             "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
             "seen_at=%d, "
-            "undated=%d, not_today=%d]. Page text fetched for %d products.",
+            "undated=%d, outside_window=%d]. Page text fetched for %d products.",
             roaster.name,
+            NEW_PRODUCTS_WINDOW_DAYS,
             run_id,
             len(new_urls),
             by_source["shopify_published_at"],
@@ -620,7 +658,7 @@ async def _process_roaster_inner(
             by_source["wix_lastmod"],
             by_source["seen_at"],
             undated,
-            not_today,
+            outside_window,
             page_fetch_count,
         )
         return report_path, []
@@ -665,7 +703,7 @@ async def _process_roaster_inner(
         )
 
     descriptions_by_url = build_descriptions_by_url()
-    new_urls, by_source, undated, not_today = classify_new_products(
+    new_urls, by_source, undated, outside_window = classify_new_products(
         new_products,
         run_day,
         seen_products,
@@ -673,6 +711,8 @@ async def _process_roaster_inner(
         http_last_modified_by_url,
         wix_lastmod_by_url,
         roaster.platform,
+        window_days=NEW_PRODUCTS_WINDOW_DAYS,
+        persist_seen=True,
     )
     new_items: list[dict[str, Any]] = []
     if settings.save_report and new_urls:
@@ -723,11 +763,12 @@ async def _process_roaster_inner(
             report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
             write_report(report_path, note="Gemini skipped by configuration.")
         logger.info(
-            "New products for %s (dated %s): %d "
+            "New products for %s (last %d days ending %s UTC): %d "
             "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
             "seen_at=%d, "
-            "undated=%d, not_today=%d]. Page text fetched for %d products.",
+            "undated=%d, outside_window=%d]. Page text fetched for %d products.",
             roaster.name,
+            NEW_PRODUCTS_WINDOW_DAYS,
             run_id,
             len(new_urls),
             by_source["shopify_published_at"],
@@ -735,7 +776,7 @@ async def _process_roaster_inner(
             by_source["wix_lastmod"],
             by_source["seen_at"],
             undated,
-            not_today,
+            outside_window,
             page_fetch_count,
         )
         return report_path, new_items
@@ -787,11 +828,12 @@ async def _process_roaster_inner(
                 grounding_payload=grounding,
             )
         logger.info(
-            "New products for %s (dated %s): %d "
+            "New products for %s (last %d days ending %s UTC): %d "
             "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
             "seen_at=%d, "
-            "undated=%d, not_today=%d]. Page text fetched for %d products.",
+            "undated=%d, outside_window=%d]. Page text fetched for %d products.",
             roaster.name,
+            NEW_PRODUCTS_WINDOW_DAYS,
             run_id,
             len(new_urls),
             by_source["shopify_published_at"],
@@ -799,7 +841,7 @@ async def _process_roaster_inner(
             by_source["wix_lastmod"],
             by_source["seen_at"],
             undated,
-            not_today,
+            outside_window,
             page_fetch_count,
         )
         return report_path, new_items
@@ -814,11 +856,12 @@ async def _process_roaster_inner(
     else:
         report_path = None
     logger.info(
-        "New products for %s (dated %s): %d "
+        "New products for %s (last %d days ending %s UTC): %d "
         "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
         "seen_at=%d, "
-        "undated=%d, not_today=%d]. Page text fetched for %d products.",
+        "undated=%d, outside_window=%d]. Page text fetched for %d products.",
         roaster.name,
+        NEW_PRODUCTS_WINDOW_DAYS,
         run_id,
         len(new_urls),
         by_source["shopify_published_at"],
@@ -826,7 +869,7 @@ async def _process_roaster_inner(
         by_source["wix_lastmod"],
         by_source["seen_at"],
         undated,
-        not_today,
+        outside_window,
         page_fetch_count,
     )
     return report_path, new_items
@@ -930,9 +973,17 @@ async def run(settings: Settings) -> int:
         if not reports:
             logger.error("Digest-only mode: no readable reports found for %s.", run_id)
             return 1
-        filtered_new_items = build_filtered_new_items_for_digest(
-            reports, run_id, settings, logger, "Digest-only"
-        )
+        filtered_new_items: list[dict[str, Any]] = []
+        if settings.new_products_digest:
+            filtered_new_items = build_filtered_new_items_for_digest(
+                reports,
+                run_id,
+                settings,
+                logger,
+                "Digest-only",
+                window_days=NEW_PRODUCTS_WINDOW_DAYS,
+                persist_seen=False,
+            )
         failed_roasters = _extract_failed_roasters_from_reports(reports)
         digest_jobs = build_digest_jobs(
             reports,
@@ -994,9 +1045,17 @@ async def run(settings: Settings) -> int:
         if not reports:
             logger.error("Resume mode: no readable reports found for %s.", run_id)
             return 1
-        filtered_new_items = build_filtered_new_items_for_digest(
-            reports, run_id, settings, logger, "Resume mode"
-        )
+        filtered_new_items: list[dict[str, Any]] = []
+        if settings.new_products_digest:
+            filtered_new_items = build_filtered_new_items_for_digest(
+                reports,
+                run_id,
+                settings,
+                logger,
+                "Resume mode",
+                window_days=NEW_PRODUCTS_WINDOW_DAYS,
+                persist_seen=False,
+            )
         missing_roasters = _collect_missing_roaster_names(
             roasters, settings.reports_dir, run_id
         )
@@ -1048,23 +1107,32 @@ async def run(settings: Settings) -> int:
     results = await run_roaster_tasks(roasters)
 
     report_paths: list[Path] = []
-    new_items: list[dict[str, Any]] = []
     for result in results:
         if isinstance(result, Exception):
             logger.exception("Roaster task failed: %s", result)
             continue
-        path, items = result
+        path, _items = result
         if path:
             report_paths.append(path)
-        new_items.extend(items)
     reports: list[tuple[str, str]] = []
+    filtered_new_items: list[dict[str, Any]] = []
     if report_paths:
         reports = load_reports_for_digest(report_paths, logger)
         failed_roasters = _extract_failed_roasters_from_reports(reports)
+        if settings.new_products_digest:
+            filtered_new_items = build_filtered_new_items_for_digest(
+                reports,
+                run_id,
+                settings,
+                logger,
+                "Run mode",
+                window_days=NEW_PRODUCTS_WINDOW_DAYS,
+                persist_seen=False,
+            )
     if settings.save_report:
         digest_jobs = build_digest_jobs(
             reports,
-            new_items,
+            filtered_new_items,
             language,
             settings.batch_page_text_max_chars,
             settings.new_products_digest,

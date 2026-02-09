@@ -154,8 +154,8 @@ def build_new_products_digest_prompt(
     language: str,
 ) -> str:
     header = (
-        "You are given a list of newly discovered coffees across multiple roasters.\n"
-        "Write a digest of the best new coffees.\n"
+        "You are given a list of newly discovered coffees from the past 7 days across multiple roasters.\n"
+        "Write a digest of the best new coffees from this 7-day window.\n"
         "Be detailed in your recommendations and reasoning, and explain unfamiliar terms.\n"
         "Do not worry about a long report length.\n"
         "Include: overall summary, standout coffees and why, any roasters with no strong picks, "
