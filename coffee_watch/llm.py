@@ -283,7 +283,7 @@ class CoffeeWatchLLM:
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": MLX_MAX_TOKENS,
-            "temperature": 0.2,
+            "temperature": 1.0,
             "stream": False,
         }
 

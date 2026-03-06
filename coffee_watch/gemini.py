@@ -267,7 +267,7 @@ async def evaluate_roaster_markdown(
     config = types.GenerateContentConfig(
         tools=[grounding_tool],
         response_mime_type="text/plain",
-        temperature=0.2,
+        temperature=1.0,
     )
 
     input_tokens: Optional[int] = None
@@ -363,7 +363,7 @@ async def generate_digest_markdown(
 ) -> Optional[str]:
     config = types.GenerateContentConfig(
         response_mime_type="text/plain",
-        temperature=0.2,
+        temperature=1.0,
     )
     try:
         response = await await_with_timeout(

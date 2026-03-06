@@ -127,6 +127,7 @@ Notes:
 - Plain `python main.py` now defaults to the local MLX backend.
 - `GEMINI_API_KEY` is only required when `llm_backend` is `gemini`.
 - Prompt text is intentionally shared between Gemini and local MLX runs so report quality differences are easier to attribute to the model/runtime rather than prompt differences. The local backend does not inject extra task instructions beyond transport/runtime settings.
+- The current comparison baseline also uses the same decoding temperature on both backends: `1.0` for Gemini and local MLX. This was chosen to stay closer to vendor-recommended starting points and because a lower shared temperature (`0.2`) was observed to reinforce repetitive self-check loops on the small local Qwen model.
 - Descriptions are extracted from product `body_html` (when available).
 - Shopify sources rely on `products.json` and skip per-product page fetches.
 - `gemini_timeout_s` / `llm_timeout_s` controls LLM request timeouts in seconds (0 = no timeout).
