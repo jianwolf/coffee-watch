@@ -126,12 +126,12 @@ Example `config/settings.json`:
 Notes:
 - Plain `python main.py` now defaults to the local MLX backend.
 - `GEMINI_API_KEY` is only required when `llm_backend` is `gemini`.
-- Prompt text is intentionally shared between Gemini and local MLX runs so report quality differences are easier to attribute to the model/runtime rather than prompt differences.
+- Prompt text is intentionally shared between Gemini and local MLX runs so report quality differences are easier to attribute to the model/runtime rather than prompt differences. The local backend does not inject extra task instructions beyond transport/runtime settings.
 - Descriptions are extracted from product `body_html` (when available).
 - Shopify sources rely on `products.json` and skip per-product page fetches.
 - `gemini_timeout_s` / `llm_timeout_s` controls LLM request timeouts in seconds (0 = no timeout).
 - `model` applies to per-roaster reports; `digest_model` applies to digest generation.
-- `llm_backend=mlx` starts or reuses a local MLX server at `http://<mlx_host>:<mlx_port>/v1`.
+- `llm_backend=mlx` starts or reuses a local MLX server at a runtime-specific base URL: `http://<mlx_host>:<mlx_port>/v1` for `mlx_runtime=lm`, and `http://<mlx_host>:<mlx_port>` for `mlx_runtime=vlm`.
 - `mlx_runtime=vlm` starts `mlx_vlm.server`; `mlx_runtime=lm` starts `mlx_lm.server`.
 - `mlx_trust_remote_code` passes `--trust-remote-code` to the MLX server when needed by a model.
 - `mlx_model` defaults to `mlx-community/Qwen3.5-9B-MLX-8bit`, and is also used as the default `model` and `digest_model` when `llm_backend=mlx`.

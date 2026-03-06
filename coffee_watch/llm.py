@@ -281,17 +281,7 @@ class CoffeeWatchLLM:
 
         payload = {
             "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Think carefully before answering, then produce a complete "
-                        "final markdown report. The saved report must contain only "
-                        "the final answer."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
+            "messages": [{"role": "user", "content": prompt}],
             "max_tokens": MLX_MAX_TOKENS,
             "temperature": 0.2,
             "stream": False,

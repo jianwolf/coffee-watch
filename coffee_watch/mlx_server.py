@@ -5,7 +5,9 @@ This module manages MLX server subprocess lifecycle:
 - Waits for server readiness via health check
 - Cleans up on exit
 
-The server exposes an OpenAI-compatible API at http://127.0.0.1:{port}/v1.
+Runtime-specific base URLs:
+- `mlx_lm.server` uses `http://127.0.0.1:{port}/v1`
+- `mlx_vlm.server` uses `http://127.0.0.1:{port}`
 """
 
 from __future__ import annotations
