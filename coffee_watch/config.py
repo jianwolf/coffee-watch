@@ -10,9 +10,16 @@ from typing import Any, Optional
 
 @dataclass(frozen=True)
 class Settings:
+    llm_backend: str
     model: str
     digest_model: str
     gemini_timeout_s: float
+    mlx_model: str
+    mlx_runtime: str
+    mlx_host: str
+    mlx_port: int
+    mlx_startup_timeout_s: float
+    mlx_trust_remote_code: bool
     http_timeout_s: float
     jitter_min_s: float
     jitter_max_s: float
@@ -23,6 +30,7 @@ class Settings:
     log_json_max_chars: int
     fetch_only: bool
     skip_gemini: bool
+    stream_llm_output: bool
     digest_only: bool
     resume: bool
     save_prompt: bool
@@ -41,9 +49,16 @@ class Settings:
     @staticmethod
     def defaults() -> "Settings":
         return Settings(
+            llm_backend="mlx",
             model="gemini-3-flash-preview",
             digest_model="gemini-3-pro-preview",
             gemini_timeout_s=600.0,
+            mlx_model="mlx-community/Qwen3.5-9B-MLX-8bit",
+            mlx_runtime="vlm",
+            mlx_host="127.0.0.1",
+            mlx_port=8080,
+            mlx_startup_timeout_s=900.0,
+            mlx_trust_remote_code=False,
             http_timeout_s=20.0,
             jitter_min_s=0.7,
             jitter_max_s=2.0,
@@ -54,6 +69,7 @@ class Settings:
             log_json_max_chars=0,
             fetch_only=False,
             skip_gemini=False,
+            stream_llm_output=True,
             digest_only=False,
             resume=False,
             save_prompt=False,
@@ -72,11 +88,18 @@ class Settings:
 
 
 def add_bool_flag(
-    parser: argparse.ArgumentParser, name: str, help_text: str, default: Optional[bool]
+    parser: argparse.ArgumentParser,
+    name: str,
+    help_text: str,
+    default: Optional[bool],
+    aliases: Optional[list[str]] = None,
 ) -> None:
     dest = name.replace("-", "_")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument(f"--{name}", dest=dest, action="store_true", help=help_text)
+    enable_flags = [f"--{name}"]
+    if aliases:
+        enable_flags.extend(f"--{alias}" for alias in aliases)
+    group.add_argument(*enable_flags, dest=dest, action="store_true", help=help_text)
     group.add_argument(
         f"--no-{name}", dest=dest, action="store_false", help=f"Disable {help_text}"
     )
@@ -87,15 +110,59 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Coffee Watch monitoring agent")
     parser.add_argument("--config", type=Path, help="Path to JSON config file")
     parser.add_argument(
-        "--model", type=str, help="Gemini model ID for roaster reports"
+        "--llm-backend",
+        type=str,
+        choices=("gemini", "mlx"),
+        help="LLM backend to use: hosted Gemini or local MLX service",
     )
     parser.add_argument(
-        "--digest-model", type=str, help="Gemini model ID for digest generation"
+        "--model",
+        type=str,
+        help="Model name for roaster reports (Gemini model ID or local served model name)",
+    )
+    parser.add_argument(
+        "--digest-model",
+        type=str,
+        help="Model name for digest generation (Gemini model ID or local served model name)",
     )
     parser.add_argument(
         "--gemini-timeout-s",
+        "--llm-timeout-s",
+        dest="gemini_timeout_s",
         type=float,
-        help="Gemini request timeout in seconds (0 = no timeout)",
+        help="LLM request timeout in seconds (0 = no timeout)",
+    )
+    parser.add_argument(
+        "--mlx-model",
+        type=str,
+        help="Hugging Face model ID to serve with the selected MLX runtime",
+    )
+    parser.add_argument(
+        "--mlx-runtime",
+        type=str,
+        choices=("lm", "vlm"),
+        help="Which MLX server runtime to start for the local model",
+    )
+    parser.add_argument(
+        "--mlx-host",
+        type=str,
+        help="Host for the local MLX server instance",
+    )
+    parser.add_argument(
+        "--mlx-port",
+        type=int,
+        help="Port for the local MLX server instance",
+    )
+    parser.add_argument(
+        "--mlx-startup-timeout-s",
+        type=float,
+        help="How long to wait for local MLX server startup",
+    )
+    add_bool_flag(
+        parser,
+        "mlx-trust-remote-code",
+        "pass --trust-remote-code to the MLX server",
+        None,
     )
     parser.add_argument("--http-timeout-s", type=float, help="HTTP timeout in seconds")
     parser.add_argument("--jitter-min-s", type=float, help="Minimum jitter sleep (s)")
@@ -123,8 +190,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         type=int,
         help="Max chars when logging products JSON snippets on errors (0 = disable)",
     )
-    add_bool_flag(parser, "fetch-only", "fetch only (no Gemini calls)", None)
-    add_bool_flag(parser, "skip-gemini", "skip Gemini calls", None)
+    add_bool_flag(parser, "fetch-only", "fetch only (no LLM calls)", None)
+    add_bool_flag(parser, "skip-gemini", "skip LLM calls", None, aliases=["skip-llm"])
+    add_bool_flag(
+        parser,
+        "stream-llm-output",
+        "stream local MLX output to the terminal",
+        None,
+    )
     add_bool_flag(parser, "digest-only", "generate digest only (no scraping)", None)
     add_bool_flag(
         parser,
@@ -132,12 +205,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "resume mode: retry missing/failed roaster reports from today, then regenerate digests",
         None,
     )
-    add_bool_flag(parser, "save-prompt", "save Gemini prompt files", None)
+    add_bool_flag(parser, "save-prompt", "save LLM prompt files", None)
     add_bool_flag(
         parser, "save-pretty-products-json", "save pretty products JSON", None
     )
     add_bool_flag(parser, "save-raw-products-json", "save raw products JSON", None)
-    add_bool_flag(parser, "save-report", "save Gemini reports", None)
+    add_bool_flag(parser, "save-report", "save LLM reports", None)
     add_bool_flag(
         parser,
         "new-products-digest",
@@ -175,13 +248,26 @@ def load_config_file(path: Optional[Path]) -> dict[str, Any]:
 
 def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings:
     defaults = Settings.defaults()
+    config_aliases = {
+        "gemini_timeout_s": ("llm_timeout_s",),
+        "skip_gemini": ("skip_llm",),
+    }
+
+    def get_config_value(field: str) -> Any:
+        if field in config and config[field] is not None:
+            return config[field]
+        for alias in config_aliases.get(field, ()):
+            if alias in config and config[alias] is not None:
+                return config[alias]
+        return None
 
     def pick_value(field: str) -> Any:
         value = getattr(args, field, None)
         if value is not None:
             return value
-        if field in config and config[field] is not None:
-            return config[field]
+        config_value = get_config_value(field)
+        if config_value is not None:
+            return config_value
         return getattr(defaults, field)
 
     def pick_path(field: str) -> Path:
@@ -196,10 +282,44 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
             return Path(str(config["seen_db_path"]))
         return defaults.seen_db_path
 
+    llm_backend = str(pick_value("llm_backend")).strip().lower() or defaults.llm_backend
+    if llm_backend not in {"gemini", "mlx"}:
+        llm_backend = defaults.llm_backend
+
+    mlx_model = str(pick_value("mlx_model"))
+    mlx_runtime = str(pick_value("mlx_runtime")).strip().lower() or defaults.mlx_runtime
+    if mlx_runtime not in {"lm", "vlm"}:
+        mlx_runtime = defaults.mlx_runtime
+    explicit_model = getattr(args, "model", None)
+    if explicit_model is None:
+        explicit_model = get_config_value("model")
+    explicit_digest_model = getattr(args, "digest_model", None)
+    if explicit_digest_model is None:
+        explicit_digest_model = get_config_value("digest_model")
+
+    model = str(explicit_model) if explicit_model is not None else defaults.model
+    digest_model = (
+        str(explicit_digest_model)
+        if explicit_digest_model is not None
+        else defaults.digest_model
+    )
+    if llm_backend == "mlx":
+        if explicit_model is None:
+            model = mlx_model
+        if explicit_digest_model is None:
+            digest_model = model
+
     return Settings(
-        model=str(pick_value("model")),
-        digest_model=str(pick_value("digest_model")),
+        llm_backend=llm_backend,
+        model=model,
+        digest_model=digest_model,
         gemini_timeout_s=float(pick_value("gemini_timeout_s")),
+        mlx_model=mlx_model,
+        mlx_runtime=mlx_runtime,
+        mlx_host=str(pick_value("mlx_host")),
+        mlx_port=int(pick_value("mlx_port")),
+        mlx_startup_timeout_s=float(pick_value("mlx_startup_timeout_s")),
+        mlx_trust_remote_code=bool(pick_value("mlx_trust_remote_code")),
         http_timeout_s=float(pick_value("http_timeout_s")),
         jitter_min_s=float(pick_value("jitter_min_s")),
         jitter_max_s=float(pick_value("jitter_max_s")),
@@ -210,6 +330,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         log_json_max_chars=int(pick_value("log_json_max_chars")),
         fetch_only=bool(pick_value("fetch_only")),
         skip_gemini=bool(pick_value("skip_gemini")),
+        stream_llm_output=bool(pick_value("stream_llm_output")),
         digest_only=bool(pick_value("digest_only")),
         resume=bool(pick_value("resume")),
         save_prompt=bool(pick_value("save_prompt")),

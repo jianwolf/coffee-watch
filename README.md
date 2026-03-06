@@ -2,16 +2,16 @@
 
 I'm a machine learning engineer who loves making and drinking coffee. I pursue top-quality and interesting coffee choices, but I don't have detailed knowledge about choosing roasters, farms, or beans. This is an agentic LLM system to help me make informed decisions.
 
-A low-frequency monitoring agent that checks specialty coffee roasters for new releases and evaluates them with Gemini + Google Search grounding.
+A low-frequency monitoring agent that checks specialty coffee roasters for new releases and evaluates them with either Gemini + Google Search grounding or a local MLX-served model such as Qwen.
 
 ## Highlights
 - Polite crawling with robots.txt checks, jittered pacing, and a fixed User-Agent.
-- Batch evaluation with grounded Gemini outputs and saved markdown reports.
+- Batch evaluation with grounded Gemini outputs or local MLX outputs, with saved markdown reports.
 - Config-driven sources for easy customization.
 - Structured logs for requests, prompts, and outcomes.
 - SQLite seen-products store to track first-seen items by URL/title/description hash.
 - Exponential retry with jitter on transient failures (e.g., 429/5xx).
-- Per-roaster Gemini retry up to 10 attempts; hard failures are explicitly recorded.
+- Per-roaster LLM retry up to 10 attempts; hard failures are explicitly recorded.
 - Stateless runs; outputs are written to `reports/` and `logs/`.
 
 ## How it works
@@ -28,8 +28,9 @@ A low-frequency monitoring agent that checks specialty coffee roasters for new r
 - `coffee_watch/network.py` handles HTTP, robots.txt, and jittered fetches.
 - `coffee_watch/parsing.py` parses roaster configs and product lists.
 - `coffee_watch/catalog_parsers.py` handles site-specific catalog parsing (e.g., Wix).
-- `coffee_watch/prompts.py` builds Gemini prompts and language helpers.
+- `coffee_watch/prompts.py` builds report prompts and language helpers.
 - `coffee_watch/gemini.py` wraps Gemini calls + grounding extraction.
+- `coffee_watch/llm.py` selects the active backend and bridges Gemini vs local MLX.
 - `coffee_watch/seen_products.py` stores first-seen products in SQLite.
 
 ## Quickstart
@@ -38,8 +39,13 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-export GEMINI_API_KEY=your_key_here
 python main.py
+```
+
+Gemini override:
+```bash
+export GEMINI_API_KEY=your_key_here
+python main.py --llm-backend gemini
 ```
 
 ### CLI usage
@@ -50,11 +56,14 @@ python main.py
 
 Override on the CLI:
 ```bash
-python main.py --language zh --http-concurrency 1 --skip-gemini
-python main.py --gemini-timeout-s 600
+python main.py --language zh --http-concurrency 1 --skip-llm
+python main.py --llm-timeout-s 600
 python main.py --seen-db-path logs/seen_products.db
 python main.py --digest-only        # regenerate digests from today's roaster reports (UTC)
 python main.py --resume             # retry only missing/failed reports today, then rebuild digests
+python main.py --llm-backend mlx --mlx-runtime vlm --mlx-model mlx-community/Qwen3.5-9B-MLX-8bit
+python main.py --llm-backend mlx --mlx-runtime vlm --mlx-trust-remote-code
+python main.py --stream-llm-output
 ```
 
 ### Testing
@@ -73,9 +82,16 @@ Example `config/settings.json`:
 ```json
 {
   "language": "zh",
-  "model": "gemini-3-flash-preview",
-  "digest_model": "gemini-3-pro-preview",
+  "llm_backend": "mlx",
+  "model": "mlx-community/Qwen3.5-9B-MLX-8bit",
+  "digest_model": "mlx-community/Qwen3.5-9B-MLX-8bit",
   "gemini_timeout_s": 600.0,
+  "mlx_model": "mlx-community/Qwen3.5-9B-MLX-8bit",
+  "mlx_runtime": "vlm",
+  "mlx_host": "127.0.0.1",
+  "mlx_port": 8080,
+  "mlx_startup_timeout_s": 900.0,
+  "mlx_trust_remote_code": false,
   "http_concurrency": 1,
   "http_timeout_s": 20.0,
   "jitter_min_s": 0.7,
@@ -86,6 +102,7 @@ Example `config/settings.json`:
   "log_json_max_chars": 0,
   "fetch_only": false,
   "skip_gemini": false,
+  "stream_llm_output": true,
   "resume": false,
   "save_prompt": false,
   "save_pretty_products_json": false,
@@ -102,13 +119,19 @@ Example `config/settings.json`:
 ```
 
 Notes:
-- Only `GEMINI_API_KEY` is read from the environment.
+- Plain `python main.py` now defaults to the local MLX backend.
+- `GEMINI_API_KEY` is only required when `llm_backend` is `gemini`.
 - Descriptions are extracted from product `body_html` (when available).
 - Shopify sources rely on `products.json` and skip per-product page fetches.
-- `gemini_timeout_s` controls Gemini request timeouts in seconds (0 = no timeout).
+- `gemini_timeout_s` / `llm_timeout_s` controls LLM request timeouts in seconds (0 = no timeout).
 - `model` applies to per-roaster reports; `digest_model` applies to digest generation.
+- `llm_backend=mlx` starts or reuses a local MLX server at `http://<mlx_host>:<mlx_port>/v1`.
+- `mlx_runtime=vlm` starts `mlx_vlm.server`; `mlx_runtime=lm` starts `mlx_lm.server`.
+- `mlx_trust_remote_code` passes `--trust-remote-code` to the MLX server when needed by a model.
+- `mlx_model` defaults to `mlx-community/Qwen3.5-9B-MLX-8bit`, and is also used as the default `model` and `digest_model` when `llm_backend=mlx`.
+- `stream_llm_output` mirrors streamed MLX output to the terminal on the local backend. It now defaults to `true`; use `--no-stream-llm-output` to disable it.
 - `new_products_digest` toggles the new-products digest report (default `true`).
-- Per-roaster Gemini generation retries up to 10 times before writing a hard-failure note.
+- Per-roaster LLM generation retries up to 10 times before writing a hard-failure note.
 - `resume` retries only missing/failed roaster reports for today (UTC), then regenerates digests from all today reports.
 - The new-products digest includes coffees discovered in the last 7 days (inclusive, UTC run day).
 - `--digest-only` regenerates digests from today's existing roaster reports and does not update `logs/seen_products.db`.
@@ -123,7 +146,7 @@ Notes:
 
 ## Outputs (generated locally)
 - `reports/` — Markdown reports + prompt captures
-- `logs/coffee_watch.log` — request/response and Gemini traces
+- `logs/coffee_watch.log` — request/response and LLM traces
 - `logs/seen_products.db` — seen product hashes and first-seen timestamps
 
 ## Support & Opt-out

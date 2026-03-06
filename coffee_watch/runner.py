@@ -13,11 +13,10 @@ from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
 import httpx
-from google import genai
 
 from .config import Settings
 from .constants import USER_AGENT
-from .gemini import evaluate_roaster_markdown, format_grounding_metadata, generate_digest_markdown
+from .llm import CoffeeWatchLLM, backend_label, format_grounding_metadata
 from .logging_utils import setup_logging
 from .models import ProductCandidate, RoasterSource
 from .network import (
@@ -57,6 +56,8 @@ class DigestJob:
 ROASTER_GEMINI_MAX_ATTEMPTS = 10
 ROASTER_REPORT_FAILURE_SUFFIX = "roaster report generation has failed"
 NEW_PRODUCTS_WINDOW_DAYS = 7
+LEGACY_EMPTY_REPORT_LINE = "Gemini returned no text for this roaster."
+EMPTY_REPORT_LINE = "LLM returned no text for this roaster."
 
 
 def _build_roaster_failure_line(roaster_name: str) -> str:
@@ -76,7 +77,7 @@ def _extract_failed_roasters_from_reports(
                 roaster_name = line.split("Roaster: ", 1)[1].strip()
                 continue
             if (
-                line == "Gemini returned no text for this roaster."
+                line in {LEGACY_EMPTY_REPORT_LINE, EMPTY_REPORT_LINE}
                 and roaster_name
                 and roaster_name not in seen
             ):
@@ -119,7 +120,7 @@ def _merge_failed_roaster_names(*groups: list[str]) -> list[str]:
 
 
 def _report_indicates_roaster_failure(text: str) -> bool:
-    if "Gemini returned no text for this roaster." in text:
+    if LEGACY_EMPTY_REPORT_LINE in text or EMPTY_REPORT_LINE in text:
         return True
     for raw_line in text.splitlines():
         if raw_line.strip().endswith(ROASTER_REPORT_FAILURE_SUFFIX):
@@ -431,19 +432,19 @@ def save_digest_prompts(
 ) -> None:
     for job in jobs:
         prompt_path = save_prompt_text(assets_dir, run_id, job.name, job.prompt)
-        logger.info("Saved Gemini %s prompt to %s", job.name, prompt_path)
+        logger.info("Saved LLM %s prompt to %s", job.name, prompt_path)
         if save_prompt:
             report_prompt_path = save_prompt_text(
                 reports_dir, run_id, job.name, job.prompt
             )
             logger.info(
-                "Saved Gemini %s prompt copy to %s", job.name, report_prompt_path
+                "Saved LLM %s prompt copy to %s", job.name, report_prompt_path
             )
 
 
 async def generate_digest_reports(
     jobs: list[DigestJob],
-    genai_client: genai.Client,
+    llm_client: CoffeeWatchLLM,
     settings: Settings,
     logger: logging.Logger,
     run_id: str,
@@ -453,8 +454,7 @@ async def generate_digest_reports(
         return
     failed_names = failed_roasters or []
     tasks = [
-        generate_digest_markdown(
-            genai_client,
+        llm_client.generate_digest_markdown(
             settings.digest_model,
             job.prompt,
             logger,
@@ -474,10 +474,10 @@ async def generate_digest_reports(
             logger.info("Saved %s report to %s", job.name, digest_path)
             if not digest:
                 logger.warning(
-                    "Gemini returned no %s text; saved failure-only digest.", job.name
+                    "LLM returned no %s text; saved failure-only digest.", job.name
                 )
         elif not digest:
-            logger.warning("Gemini returned no %s text.", job.name)
+            logger.warning("LLM returned no %s text.", job.name)
 
 
 async def process_roaster(
@@ -489,7 +489,7 @@ async def process_roaster(
     assets_dir: Path,
     http_semaphore: asyncio.Semaphore,
     logger: logging.Logger,
-    api_key: Optional[str],
+    llm_client: CoffeeWatchLLM,
     language: str,
     denylist: set[str],
     seen_products: SeenProducts,
@@ -504,7 +504,7 @@ async def process_roaster(
             assets_dir,
             http_semaphore,
             logger,
-            api_key,
+            llm_client,
             language,
             denylist,
             seen_products,
@@ -523,7 +523,7 @@ async def _process_roaster_inner(
     assets_dir: Path,
     http_semaphore: asyncio.Semaphore,
     logger: logging.Logger,
-    api_key: Optional[str],
+    llm_client: CoffeeWatchLLM,
     language: str,
     denylist: set[str],
     seen_products: SeenProducts,
@@ -621,7 +621,7 @@ async def _process_roaster_inner(
 
     if settings.fetch_only:
         logger.info(
-            "Fetch-only mode enabled; skipping product page fetches and Gemini."
+            "Fetch-only mode enabled; skipping product page fetches and LLM."
         )
         descriptions_by_url = build_descriptions_by_url()
         new_urls, by_source, undated, outside_window = classify_new_products(
@@ -742,17 +742,17 @@ async def _process_roaster_inner(
         language,
     )
     prompt_path = save_prompt_text(assets_dir, run_id, roaster.name, prompt)
-    logger.info("Saved Gemini prompt for %s to %s", roaster.name, prompt_path)
+    logger.info("Saved LLM prompt for %s to %s", roaster.name, prompt_path)
     if settings.save_prompt:
         report_prompt_path = save_prompt_text(
             settings.reports_dir, run_id, roaster.name, prompt
         )
         logger.info(
-            "Saved Gemini prompt copy for %s to %s", roaster.name, report_prompt_path
+            "Saved LLM prompt copy for %s to %s", roaster.name, report_prompt_path
         )
 
     if settings.skip_gemini:
-        logger.info("Gemini skipped by configuration.")
+        logger.info("LLM skipped by configuration.")
         report_path = None
         if settings.save_report:
             coffee_list = format_coffee_list(
@@ -761,7 +761,7 @@ async def _process_roaster_inner(
                 settings.batch_page_text_max_chars,
             )
             report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
-            write_report(report_path, note="Gemini skipped by configuration.")
+            write_report(report_path, note="LLM skipped by configuration.")
         logger.info(
             "New products for %s (last %d days ending %s UTC): %d "
             "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
@@ -781,12 +781,10 @@ async def _process_roaster_inner(
         )
         return report_path, new_items
 
-    genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
     markdown: Optional[str] = None
     grounding: Optional[dict[str, Any]] = None
     for attempt in range(1, ROASTER_GEMINI_MAX_ATTEMPTS + 1):
-        markdown, grounding = await evaluate_roaster_markdown(
-            genai_client,
+        markdown, grounding = await llm_client.evaluate_roaster_markdown(
             settings.model,
             roaster.name,
             prompt,
@@ -796,21 +794,21 @@ async def _process_roaster_inner(
         if markdown:
             if attempt > 1:
                 logger.info(
-                    "Gemini succeeded for %s on attempt %d/%d.",
+                    "LLM succeeded for %s on attempt %d/%d.",
                     roaster.name,
                     attempt,
                     ROASTER_GEMINI_MAX_ATTEMPTS,
                 )
             break
         logger.warning(
-            "Gemini returned no text for %s (attempt %d/%d).",
+            "LLM returned no text for %s (attempt %d/%d).",
             roaster.name,
             attempt,
             ROASTER_GEMINI_MAX_ATTEMPTS,
         )
     if markdown is None:
         logger.warning(
-            "Gemini returned no text for %s after %d attempts.",
+            "LLM returned no text for %s after %d attempts.",
             roaster.name,
             ROASTER_GEMINI_MAX_ATTEMPTS,
         )
@@ -890,185 +888,262 @@ async def run(settings: Settings) -> int:
     assets_dir = settings.log_path.parent / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     logger.info(
-        "Using Gemini models: roaster=%s digest=%s",
+        "Using LLM backend: backend=%s roaster=%s digest=%s",
+        backend_label(settings),
         settings.model,
         settings.digest_model,
     )
+    if settings.llm_backend == "mlx":
+        logger.info(
+            "MLX server target: runtime=%s model=%s url=http://%s:%d/v1 startup_timeout=%.1fs trust_remote_code=%s",
+            settings.mlx_runtime,
+            settings.mlx_model,
+            settings.mlx_host,
+            settings.mlx_port,
+            settings.mlx_startup_timeout_s,
+            settings.mlx_trust_remote_code,
+        )
     logger.info(
         "New-products digest: %s",
         "enabled" if settings.new_products_digest else "disabled",
     )
 
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+    if settings.llm_backend == "gemini" and not api_key:
         logger.warning("No GEMINI_API_KEY found; relying on default SDK auth.")
+    llm_client = CoffeeWatchLLM(settings, api_key, logger)
+    try:
+        roasters = load_roasters(settings, logger)
+        if not roasters:
+            logger.error("No roasters configured; exiting.")
+            return 1
 
-    roasters = load_roasters(settings, logger)
-    if not roasters:
-        logger.error("No roasters configured; exiting.")
-        return 1
-
-    raw_language = settings.language
-    language = normalize_language(raw_language)
-    if raw_language.strip().lower() != language:
-        logger.info("Normalized language setting from %s to %s", raw_language, language)
-
-    denylist = load_denylist(settings.denylist_path)
-    if denylist:
-        logger.info("Loaded %d denylisted domains.", len(denylist))
-
-    robots_cache: dict[str, RobotFileParser] = {}
-    run_date = datetime.now(timezone.utc).strftime("%Y%m%d")
-    run_id = run_date
-    timeout = httpx.Timeout(settings.http_timeout_s)
-    http_semaphore = asyncio.Semaphore(max(1, settings.http_concurrency))
-    failed_roasters: list[str] = []
-    if settings.digest_only and settings.resume:
-        logger.info("Both digest-only and resume are enabled; running digest-only mode.")
-
-    async def run_roaster_tasks(
-        target_roasters: list[RoasterSource],
-    ) -> list[Any]:
-        if not target_roasters:
-            return []
-        seen_products = SeenProducts(settings.seen_db_path, logger)
-        try:
-            async with httpx.AsyncClient(
-                http2=True,
-                headers={"User-Agent": USER_AGENT},
-                follow_redirects=True,
-                timeout=timeout,
-            ) as http_client:
-                tasks = [
-                    process_roaster(
-                        roaster,
-                        http_client,
-                        settings,
-                        robots_cache,
-                        run_id,
-                        assets_dir,
-                        http_semaphore,
-                        logger,
-                        api_key,
-                        language,
-                        denylist,
-                        seen_products,
-                    )
-                    for roaster in target_roasters
-                ]
-                return await asyncio.gather(*tasks, return_exceptions=True)
-        finally:
-            seen_products.close()
-
-    if settings.digest_only:
-        report_paths = _today_roaster_report_paths(settings.reports_dir, run_id)
-        if not report_paths:
-            logger.error(
-                "Digest-only mode: no reports found for %s in %s",
-                run_id,
-                settings.reports_dir,
+        raw_language = settings.language
+        language = normalize_language(raw_language)
+        if raw_language.strip().lower() != language:
+            logger.info(
+                "Normalized language setting from %s to %s", raw_language, language
             )
-            return 1
-        reports = load_reports_for_digest(report_paths, logger)
-        if not reports:
-            logger.error("Digest-only mode: no readable reports found for %s.", run_id)
-            return 1
-        filtered_new_items: list[dict[str, Any]] = []
-        if settings.new_products_digest:
-            filtered_new_items = build_filtered_new_items_for_digest(
+
+        denylist = load_denylist(settings.denylist_path)
+        if denylist:
+            logger.info("Loaded %d denylisted domains.", len(denylist))
+
+        robots_cache: dict[str, RobotFileParser] = {}
+        run_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+        run_id = run_date
+        timeout = httpx.Timeout(settings.http_timeout_s)
+        http_semaphore = asyncio.Semaphore(max(1, settings.http_concurrency))
+        failed_roasters: list[str] = []
+        if settings.digest_only and settings.resume:
+            logger.info(
+                "Both digest-only and resume are enabled; running digest-only mode."
+            )
+
+        async def run_roaster_tasks(
+            target_roasters: list[RoasterSource],
+        ) -> list[Any]:
+            if not target_roasters:
+                return []
+            seen_products = SeenProducts(settings.seen_db_path, logger)
+            try:
+                async with httpx.AsyncClient(
+                    http2=True,
+                    headers={"User-Agent": USER_AGENT},
+                    follow_redirects=True,
+                    timeout=timeout,
+                ) as http_client:
+                    tasks = [
+                        process_roaster(
+                            roaster,
+                            http_client,
+                            settings,
+                            robots_cache,
+                            run_id,
+                            assets_dir,
+                            http_semaphore,
+                            logger,
+                            llm_client,
+                            language,
+                            denylist,
+                            seen_products,
+                        )
+                        for roaster in target_roasters
+                    ]
+                    return await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                seen_products.close()
+
+        if settings.digest_only:
+            report_paths = _today_roaster_report_paths(settings.reports_dir, run_id)
+            if not report_paths:
+                logger.error(
+                    "Digest-only mode: no reports found for %s in %s",
+                    run_id,
+                    settings.reports_dir,
+                )
+                return 1
+            reports = load_reports_for_digest(report_paths, logger)
+            if not reports:
+                logger.error(
+                    "Digest-only mode: no readable reports found for %s.", run_id
+                )
+                return 1
+            filtered_new_items: list[dict[str, Any]] = []
+            if settings.new_products_digest:
+                filtered_new_items = build_filtered_new_items_for_digest(
+                    reports,
+                    run_id,
+                    settings,
+                    logger,
+                    "Digest-only",
+                    window_days=NEW_PRODUCTS_WINDOW_DAYS,
+                    persist_seen=False,
+                )
+            failed_roasters = _extract_failed_roasters_from_reports(reports)
+            digest_jobs = build_digest_jobs(
                 reports,
+                filtered_new_items,
+                language,
+                settings.batch_page_text_max_chars,
+                settings.new_products_digest,
+            )
+            save_digest_prompts(
+                digest_jobs,
+                assets_dir,
+                settings.reports_dir,
                 run_id,
+                settings.save_prompt,
+                logger,
+            )
+            if settings.skip_gemini:
+                logger.info("Digest-only mode: LLM skipped by configuration.")
+                logger.info("Run complete.")
+                return 0
+            await generate_digest_reports(
+                digest_jobs,
+                llm_client,
                 settings,
                 logger,
-                "Digest-only",
-                window_days=NEW_PRODUCTS_WINDOW_DAYS,
-                persist_seen=False,
+                run_id,
+                failed_roasters=failed_roasters,
             )
-        failed_roasters = _extract_failed_roasters_from_reports(reports)
-        digest_jobs = build_digest_jobs(
-            reports,
-            filtered_new_items,
-            language,
-            settings.batch_page_text_max_chars,
-            settings.new_products_digest,
-        )
-        save_digest_prompts(
-            digest_jobs,
-            assets_dir,
-            settings.reports_dir,
-            run_id,
-            settings.save_prompt,
-            logger,
-        )
-        if settings.skip_gemini:
-            logger.info("Digest-only mode: Gemini skipped by configuration.")
             logger.info("Run complete.")
             return 0
-        genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
-        await generate_digest_reports(
-            digest_jobs,
-            genai_client,
-            settings,
-            logger,
-            run_id,
-            failed_roasters=failed_roasters,
-        )
-        logger.info("Run complete.")
-        return 0
 
-    if settings.resume:
-        roasters_to_retry = _collect_resume_targets(
-            roasters, settings.reports_dir, run_id, logger
-        )
-        logger.info(
-            "Resume mode: found %d missing/failed reports to retry out of %d configured roasters.",
-            len(roasters_to_retry),
-            len(roasters),
-        )
-        if roasters_to_retry:
+        if settings.resume:
+            roasters_to_retry = _collect_resume_targets(
+                roasters, settings.reports_dir, run_id, logger
+            )
             logger.info(
-                "Resume mode: retrying %d roasters out of %d configured.",
+                "Resume mode: found %d missing/failed reports to retry out of %d configured roasters.",
                 len(roasters_to_retry),
                 len(roasters),
             )
-            retry_results = await run_roaster_tasks(roasters_to_retry)
-            for result in retry_results:
-                if isinstance(result, Exception):
-                    logger.exception("Resume mode roaster task failed: %s", result)
-        else:
-            logger.info(
-                "Resume mode: no missing/failed roaster reports found for %s.", run_id
-            )
+            if roasters_to_retry:
+                logger.info(
+                    "Resume mode: retrying %d roasters out of %d configured.",
+                    len(roasters_to_retry),
+                    len(roasters),
+                )
+                retry_results = await run_roaster_tasks(roasters_to_retry)
+                for result in retry_results:
+                    if isinstance(result, Exception):
+                        logger.exception("Resume mode roaster task failed: %s", result)
+            else:
+                logger.info(
+                    "Resume mode: no missing/failed roaster reports found for %s.",
+                    run_id,
+                )
 
-        report_paths = _today_roaster_report_paths(settings.reports_dir, run_id)
-        reports = load_reports_for_digest(report_paths, logger) if report_paths else []
-        if not reports:
-            logger.error("Resume mode: no readable reports found for %s.", run_id)
-            return 1
+            report_paths = _today_roaster_report_paths(settings.reports_dir, run_id)
+            reports = (
+                load_reports_for_digest(report_paths, logger) if report_paths else []
+            )
+            if not reports:
+                logger.error("Resume mode: no readable reports found for %s.", run_id)
+                return 1
+            filtered_new_items: list[dict[str, Any]] = []
+            if settings.new_products_digest:
+                filtered_new_items = build_filtered_new_items_for_digest(
+                    reports,
+                    run_id,
+                    settings,
+                    logger,
+                    "Resume mode",
+                    window_days=NEW_PRODUCTS_WINDOW_DAYS,
+                    persist_seen=False,
+                )
+            missing_roasters = _collect_missing_roaster_names(
+                roasters, settings.reports_dir, run_id
+            )
+            if missing_roasters:
+                logger.warning(
+                    "Resume mode: reports still missing for %d roasters: %s",
+                    len(missing_roasters),
+                    ", ".join(missing_roasters),
+                )
+            failed_roasters = _merge_failed_roaster_names(
+                _extract_failed_roasters_from_reports(reports),
+                missing_roasters,
+            )
+            if settings.save_report:
+                digest_jobs = build_digest_jobs(
+                    reports,
+                    filtered_new_items,
+                    language,
+                    settings.batch_page_text_max_chars,
+                    settings.new_products_digest,
+                )
+                if digest_jobs:
+                    save_digest_prompts(
+                        digest_jobs,
+                        assets_dir,
+                        settings.reports_dir,
+                        run_id,
+                        settings.save_prompt,
+                        logger,
+                    )
+                    if settings.skip_gemini:
+                        logger.info("Resume mode: LLM skipped by configuration.")
+                        logger.info("Run complete.")
+                        return 0
+                    await generate_digest_reports(
+                        digest_jobs,
+                        llm_client,
+                        settings,
+                        logger,
+                        run_id,
+                        failed_roasters=failed_roasters,
+                    )
+            logger.info("Run complete.")
+            return 0
+
+        results = await run_roaster_tasks(roasters)
+
+        report_paths: list[Path] = []
+        for result in results:
+            if isinstance(result, Exception):
+                logger.exception("Roaster task failed: %s", result)
+                continue
+            path, _items = result
+            if path:
+                report_paths.append(path)
+        reports: list[tuple[str, str]] = []
         filtered_new_items: list[dict[str, Any]] = []
-        if settings.new_products_digest:
-            filtered_new_items = build_filtered_new_items_for_digest(
-                reports,
-                run_id,
-                settings,
-                logger,
-                "Resume mode",
-                window_days=NEW_PRODUCTS_WINDOW_DAYS,
-                persist_seen=False,
-            )
-        missing_roasters = _collect_missing_roaster_names(
-            roasters, settings.reports_dir, run_id
-        )
-        if missing_roasters:
-            logger.warning(
-                "Resume mode: reports still missing for %d roasters: %s",
-                len(missing_roasters),
-                ", ".join(missing_roasters),
-            )
-        failed_roasters = _merge_failed_roaster_names(
-            _extract_failed_roasters_from_reports(reports),
-            missing_roasters,
-        )
+        if report_paths:
+            reports = load_reports_for_digest(report_paths, logger)
+            failed_roasters = _extract_failed_roasters_from_reports(reports)
+            if settings.new_products_digest:
+                filtered_new_items = build_filtered_new_items_for_digest(
+                    reports,
+                    run_id,
+                    settings,
+                    logger,
+                    "Run mode",
+                    window_days=NEW_PRODUCTS_WINDOW_DAYS,
+                    persist_seen=False,
+                )
         if settings.save_report:
             digest_jobs = build_digest_jobs(
                 reports,
@@ -1086,75 +1161,16 @@ async def run(settings: Settings) -> int:
                     settings.save_prompt,
                     logger,
                 )
-                if settings.skip_gemini:
-                    logger.info("Resume mode: Gemini skipped by configuration.")
-                    logger.info("Run complete.")
-                    return 0
-                genai_client = (
-                    genai.Client(api_key=api_key) if api_key else genai.Client()
-                )
                 await generate_digest_reports(
                     digest_jobs,
-                    genai_client,
+                    llm_client,
                     settings,
                     logger,
                     run_id,
                     failed_roasters=failed_roasters,
                 )
+
         logger.info("Run complete.")
         return 0
-
-    results = await run_roaster_tasks(roasters)
-
-    report_paths: list[Path] = []
-    for result in results:
-        if isinstance(result, Exception):
-            logger.exception("Roaster task failed: %s", result)
-            continue
-        path, _items = result
-        if path:
-            report_paths.append(path)
-    reports: list[tuple[str, str]] = []
-    filtered_new_items: list[dict[str, Any]] = []
-    if report_paths:
-        reports = load_reports_for_digest(report_paths, logger)
-        failed_roasters = _extract_failed_roasters_from_reports(reports)
-        if settings.new_products_digest:
-            filtered_new_items = build_filtered_new_items_for_digest(
-                reports,
-                run_id,
-                settings,
-                logger,
-                "Run mode",
-                window_days=NEW_PRODUCTS_WINDOW_DAYS,
-                persist_seen=False,
-            )
-    if settings.save_report:
-        digest_jobs = build_digest_jobs(
-            reports,
-            filtered_new_items,
-            language,
-            settings.batch_page_text_max_chars,
-            settings.new_products_digest,
-        )
-        if digest_jobs:
-            save_digest_prompts(
-                digest_jobs,
-                assets_dir,
-                settings.reports_dir,
-                run_id,
-                settings.save_prompt,
-                logger,
-            )
-            genai_client = genai.Client(api_key=api_key) if api_key else genai.Client()
-            await generate_digest_reports(
-                digest_jobs,
-                genai_client,
-                settings,
-                logger,
-                run_id,
-                failed_roasters=failed_roasters,
-            )
-
-    logger.info("Run complete.")
-    return 0
+    finally:
+        await llm_client.close()
