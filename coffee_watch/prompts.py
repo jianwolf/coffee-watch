@@ -74,6 +74,9 @@ def build_batch_prompt(
     max_chars: int,
     language: str,
 ) -> str:
+    # Keep this task prompt shared across Gemini and local/open-source models.
+    # The repo intentionally uses the same instruction text so model differences
+    # can be attributed to model/runtime quality rather than prompt drift.
     header = (
         f"You are evaluating coffees from {sanitize_prompt_field(roaster_name, 200)}. "
         "Your goal is to find the best coffees available right now.\n"

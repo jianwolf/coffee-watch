@@ -25,6 +25,11 @@
 - File naming: outputs use `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-z-digest.md`, `YYYYMMDD-z-roaster-digest.md`, and `YYYYMMDD-z-new-digest.md` (UTC date).
 - Avoid introducing non-ASCII text unless the file already uses it (e.g., prompt language strings).
 
+## Prompt Comparison Policy
+- Keep the main task prompt shared across Gemini and local/open-source models unless the user explicitly asks to diverge.
+- Reason: this repo is also used to study model/runtime differences. Shared prompts make it easier to compare cloud vs local behavior without prompt drift.
+- If a backend-specific instruction is unavoidable, document why in code comments and `README.md`.
+
 ## Testing Guidelines
 - No formal test suite is currently configured.
 - Use `python -m py_compile main.py coffee_watch/*.py` for a quick sanity check.

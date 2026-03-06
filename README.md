@@ -14,6 +14,11 @@ A low-frequency monitoring agent that checks specialty coffee roasters for new r
 - Per-roaster LLM retry up to 10 attempts; hard failures are explicitly recorded.
 - Stateless runs; outputs are written to `reports/` and `logs/`.
 
+## Prompting philosophy
+- Roaster and digest task prompts are intentionally shared across Gemini and local/open-source models.
+- This is a deliberate learning goal: keep instructions constant, then compare model quality, runtime behavior, quantization, and serving choices without prompt drift contaminating the comparison.
+- Backend-specific differences should stay in transport/runtime configuration, not in the task wording, unless there is a clear product requirement that outweighs comparability.
+
 ## How it works
 1. Load roaster sources from `config/roasters.json`.
 2. Fetch product lists and (optionally) product pages with robots.txt compliance.
@@ -121,6 +126,7 @@ Example `config/settings.json`:
 Notes:
 - Plain `python main.py` now defaults to the local MLX backend.
 - `GEMINI_API_KEY` is only required when `llm_backend` is `gemini`.
+- Prompt text is intentionally shared between Gemini and local MLX runs so report quality differences are easier to attribute to the model/runtime rather than prompt differences.
 - Descriptions are extracted from product `body_html` (when available).
 - Shopify sources rely on `products.json` and skip per-product page fetches.
 - `gemini_timeout_s` / `llm_timeout_s` controls LLM request timeouts in seconds (0 = no timeout).
