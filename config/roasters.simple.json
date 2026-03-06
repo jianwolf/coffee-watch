@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Little Wolf Coffee",
+    "base_url": "https://littlewolf.coffee",
+    "products_path": "/collections/coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "platform": "shopify"
+  },
+  {
+    "name": "Prodigal Coffee",
+    "base_url": "https://getprodigal.com",
+    "products_path": "/collections/roasted-coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "platform": "shopify"
+  },
+  {
+    "name": "SEY Coffee",
+    "base_url": "https://www.seycoffee.com",
+    "products_path": "/collections/coffee/products.json",
+    "products_type": "json",
+    "products_params": {
+      "limit": "250"
+    },
+    "platform": "shopify"
+  }
+]

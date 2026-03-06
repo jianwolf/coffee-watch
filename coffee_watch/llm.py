@@ -18,6 +18,15 @@ from .gemini import (
 from .mlx_server import MLXServerError, MLXServerManager
 
 THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+THINK_CLOSE_TAG_RE = re.compile(r"</think>", re.IGNORECASE)
+LEADING_REASONING_LABEL_RE = re.compile(
+    r"^\s*(thinking\s*process|thinking|reasoning|analysis)\s*:\s*",
+    re.IGNORECASE,
+)
+ANALYZE_REQUEST_RE = re.compile(
+    r"analy[sz]e\s*the\s*request", re.IGNORECASE
+)
+MLX_MAX_TOKENS = 100_000
 
 
 def backend_label(settings: Settings) -> str:
@@ -46,20 +55,76 @@ def _flatten_chat_message_content(content: Any) -> str:
     return "\n".join(chunks).strip()
 
 
-def _strip_reasoning_tags(text: str) -> str:
-    return THINK_TAG_RE.sub("", text).strip()
+def _extract_stream_content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        text = content.get("text")
+        return text if isinstance(text, str) else ""
+    if not isinstance(content, list):
+        return ""
+    chunks: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            chunks.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if isinstance(text, str):
+            chunks.append(text)
+    return "".join(chunks)
+
+
+def _trim_to_markdown_answer(text: str) -> str:
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if index == 0:
+            continue
+        if line.lstrip().startswith("#"):
+            candidate = "\n".join(lines[index:]).strip()
+            if candidate:
+                return candidate
+    return ""
+
+
+def _looks_like_reasoning_only(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text[:2000]).lower()
+    if compact.startswith(
+        ("thinkingprocess:", "thinking:", "reasoning:", "analysis:")
+    ):
+        return True
+    return "analyzetherequest" in compact
+
+
+def _sanitize_mlx_text(text: str) -> str:
+    cleaned = text
+    if THINK_CLOSE_TAG_RE.search(cleaned):
+        cleaned = THINK_CLOSE_TAG_RE.split(cleaned)[-1]
+    cleaned = THINK_TAG_RE.sub("", cleaned).strip()
+    if not cleaned:
+        return ""
+    if LEADING_REASONING_LABEL_RE.match(cleaned) or ANALYZE_REQUEST_RE.search(
+        cleaned[:500]
+    ):
+        recovered = _trim_to_markdown_answer(cleaned)
+        if recovered:
+            cleaned = recovered
+        else:
+            return ""
+    return cleaned.strip()
 
 
 def _extract_stream_delta_text(choice: dict[str, Any]) -> str:
     delta = choice.get("delta")
     if isinstance(delta, dict):
         content = delta.get("content")
-        text = _flatten_chat_message_content(content)
+        text = _extract_stream_content_text(content)
         if text:
             return text
     message = choice.get("message")
     if isinstance(message, dict):
-        return _flatten_chat_message_content(message.get("content"))
+        return _extract_stream_content_text(message.get("content"))
     return ""
 
 
@@ -219,10 +284,15 @@ class CoffeeWatchLLM:
             "messages": [
                 {
                     "role": "system",
-                    "content": "Return only the final answer. Do not include <think> tags or hidden reasoning.",
+                    "content": (
+                        "Think carefully before answering, then produce a complete "
+                        "final markdown report. The saved report must contain only "
+                        "the final answer."
+                    ),
                 },
                 {"role": "user", "content": prompt},
             ],
+            "max_tokens": MLX_MAX_TOKENS,
             "temperature": 0.2,
             "stream": False,
         }
@@ -261,7 +331,7 @@ class CoffeeWatchLLM:
                 logger.warning("MLX response JSON decode failed for %s: %s", request_name, exc)
                 return None
 
-            text = _strip_reasoning_tags(
+            text = _sanitize_mlx_text(
                 _flatten_chat_message_content(
                     (((body.get("choices") or [{}])[0]).get("message") or {}).get("content")
                 )
@@ -277,6 +347,14 @@ class CoffeeWatchLLM:
                 )
             if text:
                 return text
+            raw_text = _flatten_chat_message_content(
+                (((body.get("choices") or [{}])[0]).get("message") or {}).get("content")
+            )
+            if _looks_like_reasoning_only(raw_text):
+                logger.warning(
+                    "MLX returned reasoning-only output for %s; treating as empty.",
+                    request_name,
+                )
             logger.warning("MLX returned no text for %s.", request_name)
             return None
 
@@ -300,6 +378,7 @@ class CoffeeWatchLLM:
         raw_lines: list[str] = []
         header = f"\n[MLX stream start: {request_name} | model={model}]\n"
         sys.stderr.write(header)
+        sys.stderr.write("<think>\n")
         sys.stderr.flush()
         try:
             async with self._mlx_client.stream(
@@ -352,7 +431,8 @@ class CoffeeWatchLLM:
             sys.stderr.write(f"\n[MLX stream end: {request_name}]\n")
             sys.stderr.flush()
 
-        text = _strip_reasoning_tags("".join(chunks))
+        raw_text = "".join(chunks)
+        text = _sanitize_mlx_text(raw_text)
         if not text and raw_lines:
             fallback_body: Optional[dict[str, Any]] = None
             try:
@@ -360,7 +440,13 @@ class CoffeeWatchLLM:
             except json.JSONDecodeError:
                 fallback_body = None
             if isinstance(fallback_body, dict):
-                text = _strip_reasoning_tags(
+                raw_text = _flatten_chat_message_content(
+                    (
+                        ((fallback_body.get("choices") or [{}])[0]).get("message")
+                        or {}
+                    ).get("content")
+                )
+                text = _sanitize_mlx_text(
                     _flatten_chat_message_content(
                         (
                             ((fallback_body.get("choices") or [{}])[0]).get("message")
@@ -370,5 +456,10 @@ class CoffeeWatchLLM:
                 )
         if text:
             return text
+        if _looks_like_reasoning_only(raw_text):
+            logger.warning(
+                "MLX streamed reasoning-only output for %s; treating as empty.",
+                request_name,
+            )
         logger.warning("MLX returned no streamed text for %s.", request_name)
         return None

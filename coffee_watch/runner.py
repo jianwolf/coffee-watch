@@ -453,18 +453,21 @@ async def generate_digest_reports(
     if not jobs:
         return
     failed_names = failed_roasters or []
-    tasks = [
-        llm_client.generate_digest_markdown(
+
+    async def _run_digest_job(job: DigestJob) -> tuple[DigestJob, Optional[str]]:
+        digest = await llm_client.generate_digest_markdown(
             settings.digest_model,
             job.prompt,
             logger,
             settings.gemini_timeout_s,
             request_name=job.name,
         )
-        for job in jobs
-    ]
-    results = await asyncio.gather(*tasks)
-    for job, digest in zip(jobs, results):
+        return job, digest
+
+    tasks = [asyncio.create_task(_run_digest_job(job)) for job in jobs]
+
+    for task in asyncio.as_completed(tasks):
+        job, digest = await task
         output_text = _append_failed_roaster_lines_to_digest(digest or "", failed_names)
         if output_text and settings.save_report:
             digest_path = report_file_path(
@@ -894,12 +897,15 @@ async def run(settings: Settings) -> int:
         settings.digest_model,
     )
     if settings.llm_backend == "mlx":
+        mlx_base_url = (
+            f"http://{settings.mlx_host}:{settings.mlx_port}"
+            + ("/v1" if settings.mlx_runtime == "lm" else "")
+        )
         logger.info(
-            "MLX server target: runtime=%s model=%s url=http://%s:%d/v1 startup_timeout=%.1fs trust_remote_code=%s",
+            "MLX server target: runtime=%s model=%s url=%s startup_timeout=%.1fs trust_remote_code=%s",
             settings.mlx_runtime,
             settings.mlx_model,
-            settings.mlx_host,
-            settings.mlx_port,
+            mlx_base_url,
             settings.mlx_startup_timeout_s,
             settings.mlx_trust_remote_code,
         )

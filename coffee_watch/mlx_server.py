@@ -54,7 +54,8 @@ class MLXServerManager:
         self.health_timeout = health_timeout
         self.trust_remote_code = trust_remote_code
         self._process: subprocess.Popen | None = None
-        self._base_url = f"http://{host}:{port}/v1"
+        base_path = "/v1" if runtime == "lm" else ""
+        self._base_url = f"http://{host}:{port}{base_path}"
         self._log_path = Path(log_path) if log_path else None
         self._log_file: TextIO | None = None
         self._watchdog_thread: threading.Thread | None = None
@@ -191,7 +192,7 @@ class MLXServerManager:
             return None
 
     def _wait_for_ready(self, shutdown_on_timeout: bool = True) -> None:
-        health_url = f"http://{self.host}:{self.port}/v1/models"
+        health_url = self._health_url()
         start_time = time.time()
 
         logger.info("Waiting for MLX server to be ready (downloading model if needed)...")
@@ -234,13 +235,18 @@ class MLXServerManager:
         )
 
     def _check_health(self) -> bool:
-        health_url = f"http://{self.host}:{self.port}/v1/models"
+        health_url = self._health_url()
         try:
             req = urllib.request.Request(health_url, method="GET")
             with urllib.request.urlopen(req, timeout=self.health_timeout) as resp:
                 return resp.status == 200
         except Exception:
             return False
+
+    def _health_url(self) -> str:
+        if self.runtime == "vlm":
+            return f"http://{self.host}:{self.port}/health"
+        return f"http://{self.host}:{self.port}/v1/models"
 
     def _start_watchdog(self) -> None:
         if self.watchdog_interval <= 0 or self.watchdog_failures <= 0:
