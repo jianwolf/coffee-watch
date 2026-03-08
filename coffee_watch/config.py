@@ -8,6 +8,21 @@ from pathlib import Path
 from typing import Any, Optional
 
 
+class SingleUseOption(argparse.Action):
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: Optional[str] = None,
+    ) -> None:
+        if getattr(namespace, self.dest, None) is not None:
+            raise argparse.ArgumentError(
+                self, f"{option_string or self.dest} can only be provided once"
+            )
+        setattr(namespace, self.dest, values)
+
+
 @dataclass(frozen=True)
 class Settings:
     llm_backend: str
@@ -38,6 +53,7 @@ class Settings:
     save_raw_products_json: bool
     save_report: bool
     new_products_digest: bool
+    user_ask: str
     seen_db_path: Path
     roasters_path: Path
     denylist_path: Path
@@ -77,6 +93,7 @@ class Settings:
             save_raw_products_json=False,
             save_report=True,
             new_products_digest=True,
+            user_ask="",
             seen_db_path=Path("logs/seen_products.db"),
             roasters_path=Path("config/roasters.json"),
             denylist_path=Path("config/denylist.txt"),
@@ -217,6 +234,12 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "generate new-products digest report",
         None,
     )
+    parser.add_argument(
+        "--ask",
+        dest="user_ask",
+        action=SingleUseOption,
+        help="Optional personalized coffee ask to steer recommendations",
+    )
     parser.add_argument("--seen-db-path", type=Path, help="Path to SQLite seen DB")
     parser.add_argument("--roasters-path", type=Path, help="Path to roasters JSON")
     parser.add_argument("--denylist-path", type=Path, help="Path to denylist file")
@@ -251,7 +274,22 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
     config_aliases = {
         "gemini_timeout_s": ("llm_timeout_s",),
         "skip_gemini": ("skip_llm",),
+        "user_ask": ("ask", "user_asks", "asks"),
     }
+
+    def normalize_user_ask(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, (list, tuple)):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if len(cleaned) > 1:
+                raise ValueError(
+                    "Only one user ask is supported. Use a single 'user_ask' value or one-item 'user_asks' list."
+                )
+            return cleaned[0] if cleaned else ""
+        return str(value).strip()
 
     def get_config_value(field: str) -> Any:
         if field in config and config[field] is not None:
@@ -281,6 +319,15 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         if "seen_db_path" in config and config["seen_db_path"] is not None:
             return Path(str(config["seen_db_path"]))
         return defaults.seen_db_path
+
+    def pick_user_ask() -> str:
+        cli_value = getattr(args, "user_ask", None)
+        if cli_value is not None:
+            return normalize_user_ask(cli_value)
+        config_value = get_config_value("user_ask")
+        if config_value is not None:
+            return normalize_user_ask(config_value)
+        return defaults.user_ask
 
     llm_backend = str(pick_value("llm_backend")).strip().lower() or defaults.llm_backend
     if llm_backend not in {"gemini", "mlx"}:
@@ -338,6 +385,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         save_raw_products_json=bool(pick_value("save_raw_products_json")),
         save_report=bool(pick_value("save_report")),
         new_products_digest=bool(pick_value("new_products_digest")),
+        user_ask=pick_user_ask(),
         seen_db_path=pick_seen_db_path(),
         roasters_path=pick_path("roasters_path"),
         denylist_path=pick_path("denylist_path"),

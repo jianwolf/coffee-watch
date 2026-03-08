@@ -67,12 +67,30 @@ def sanitize_product_fields(product: ProductCandidate) -> dict[str, str]:
     }
 
 
+def format_user_ask(user_ask: str) -> str:
+    cleaned = sanitize_prompt_field(user_ask, 300)
+    if not cleaned:
+        return ""
+    return "\n".join(
+        [
+            "User ask:",
+            f"- {cleaned}",
+            "",
+            "Use this ask to steer the recommendations.",
+            "Prefer coffees that satisfy it when the provided evidence supports it.",
+            "If no coffee is a strong match, say so explicitly and explain the closest fit.",
+            "",
+        ]
+    )
+
+
 def build_batch_prompt(
     roaster_name: str,
     products: list[ProductCandidate],
     page_text_by_id: dict[str, str],
     max_chars: int,
     language: str,
+    user_ask: str = "",
 ) -> str:
     # Keep this task prompt shared across Gemini and local/open-source models.
     # The repo intentionally uses the same instruction text so model differences
@@ -92,7 +110,8 @@ def build_batch_prompt(
         "For each recommendation, explain why it is exceptional and cite the specific "
         "signals from the provided text. It is OK to recommend nothing if nothing stands "
         "out; say so explicitly.\n"
-        f"{language_instruction(language)}\n\n"
+        f"{language_instruction(language)}\n"
+        f"{format_user_ask(user_ask)}\n"
         "Products:\n"
     )
     sections: list[str] = [header]
@@ -131,6 +150,7 @@ def build_batch_prompt(
 def build_digest_prompt(
     reports: list[tuple[str, str]],
     language: str,
+    user_ask: str = "",
 ) -> str:
     header = (
         "You are given markdown reports for multiple coffee roasters.\n"
@@ -143,7 +163,8 @@ def build_digest_prompt(
         "do not assume a fixed set.\n"
         "Only use the information provided in the reports; do not introduce new coffees "
         "or roasters.\n"
-        f"{language_instruction(language)}\n\n"
+        f"{language_instruction(language)}\n"
+        f"{format_user_ask(user_ask)}\n"
     )
     sections = [header]
     for name, text in reports:
@@ -155,6 +176,7 @@ def build_new_products_digest_prompt(
     items: list[dict[str, Any]],
     max_chars: int,
     language: str,
+    user_ask: str = "",
 ) -> str:
     header = (
         "You are given a list of newly discovered coffees from the past 7 days across multiple roasters.\n"
@@ -164,7 +186,8 @@ def build_new_products_digest_prompt(
         "Include: overall summary, standout coffees and why, any roasters with no strong picks, "
         "and final overall recommendations.\n"
         "Only use the information provided below; do not introduce new coffees.\n"
-        f"{language_instruction(language)}\n\n"
+        f"{language_instruction(language)}\n"
+        f"{format_user_ask(user_ask)}\n"
         "New coffees:\n"
     )
     sections: list[str] = [header]
@@ -200,12 +223,21 @@ def build_new_products_digest_prompt(
 def build_roaster_ratings_digest_prompt(
     reports: list[tuple[str, str]],
     language: str,
+    user_ask: str = "",
 ) -> str:
-    header = (
-        "You are given markdown reports for multiple coffee roasters.\n"
-        "Rate each roaster's current offerings based on the strength of standout coffees "
+    scoring_instruction = (
+        "Rate each roaster's current offerings based on how well its standout coffees match "
+        "the user's ask, while still considering overall coffee quality. Use a 1-10 score "
+        "where 10 means an exceptional lineup for this user right now and 1 means no "
+        "compelling coffees for this user.\n"
+        if sanitize_prompt_field(user_ask, 300)
+        else "Rate each roaster's current offerings based on the strength of standout coffees "
         "in its report. Use a 1-10 score where 10 means an exceptional lineup right now "
         "and 1 means no compelling coffees.\n"
+    )
+    header = (
+        "You are given markdown reports for multiple coffee roasters.\n"
+        f"{scoring_instruction}"
         "Provide a scorecard that lists every roaster and its rating, then detailed analysis "
         "per roaster.\n"
         "Recommend highlight roasters (strongest current lineups) and lowlight roasters "
@@ -214,7 +246,8 @@ def build_roaster_ratings_digest_prompt(
         "Explicitly list all roasters represented in the reports; do not assume a fixed set.\n"
         "Only use the information provided in the reports; do not introduce new coffees "
         "or roasters.\n"
-        f"{language_instruction(language)}\n\n"
+        f"{language_instruction(language)}\n"
+        f"{format_user_ask(user_ask)}\n"
     )
     sections = [header]
     for name, text in reports:

@@ -402,21 +402,22 @@ def build_digest_jobs(
     language: str,
     max_chars: int,
     include_new_digest: bool,
+    user_ask: str,
 ) -> list[DigestJob]:
     jobs: list[DigestJob] = []
     if reports:
-        jobs.append(DigestJob("digest", build_digest_prompt(reports, language)))
+        jobs.append(DigestJob("digest", build_digest_prompt(reports, language, user_ask)))
         jobs.append(
             DigestJob(
                 "roaster-digest",
-                build_roaster_ratings_digest_prompt(reports, language),
+                build_roaster_ratings_digest_prompt(reports, language, user_ask),
             )
         )
     if include_new_digest and new_items:
         jobs.append(
             DigestJob(
                 "new-digest",
-                build_new_products_digest_prompt(new_items, max_chars, language),
+                build_new_products_digest_prompt(new_items, max_chars, language, user_ask),
             )
         )
     return jobs
@@ -743,6 +744,7 @@ async def _process_roaster_inner(
         page_text_by_id,
         settings.batch_page_text_max_chars,
         language,
+        settings.user_ask,
     )
     prompt_path = save_prompt_text(assets_dir, run_id, roaster.name, prompt)
     logger.info("Saved LLM prompt for %s to %s", roaster.name, prompt_path)
@@ -913,6 +915,8 @@ async def run(settings: Settings) -> int:
         "New-products digest: %s",
         "enabled" if settings.new_products_digest else "disabled",
     )
+    if settings.user_ask:
+        logger.info("User ask active: %s", settings.user_ask)
 
     api_key = os.getenv("GEMINI_API_KEY")
     if settings.llm_backend == "gemini" and not api_key:
@@ -1013,6 +1017,7 @@ async def run(settings: Settings) -> int:
                 language,
                 settings.batch_page_text_max_chars,
                 settings.new_products_digest,
+                settings.user_ask,
             )
             save_digest_prompts(
                 digest_jobs,
@@ -1100,6 +1105,7 @@ async def run(settings: Settings) -> int:
                     language,
                     settings.batch_page_text_max_chars,
                     settings.new_products_digest,
+                    settings.user_ask,
                 )
                 if digest_jobs:
                     save_digest_prompts(
@@ -1157,6 +1163,7 @@ async def run(settings: Settings) -> int:
                 language,
                 settings.batch_page_text_max_chars,
                 settings.new_products_digest,
+                settings.user_ask,
             )
             if digest_jobs:
                 save_digest_prompts(

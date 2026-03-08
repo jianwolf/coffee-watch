@@ -7,6 +7,7 @@ A low-frequency monitoring agent that checks specialty coffee roasters for new r
 ## Highlights
 - Polite crawling with robots.txt checks, jittered pacing, and a fixed User-Agent.
 - Batch evaluation with grounded Gemini outputs or local MLX outputs, with saved markdown reports.
+- Natural-language personalization via one optional user ask such as `decaf`, `mango note`, or `most premium`.
 - Config-driven sources for easy customization.
 - Structured logs for requests, prompts, and outcomes.
 - SQLite seen-products store to track first-seen items by URL/title/description hash.
@@ -23,7 +24,7 @@ A low-frequency monitoring agent that checks specialty coffee roasters for new r
 1. Load roaster sources from `config/roasters.json`.
 2. Fetch product lists and (optionally) product pages with robots.txt compliance.
 3. Track first-seen products in SQLite and classify new items by publish date, page headers, or first-seen timestamp.
-4. Build a batch prompt from product metadata and sanitized page text.
+4. Build a batch prompt from product metadata, sanitized page text, and any optional user ask.
 5. Generate a per-roaster report, a full digest, a new-products digest (past 7 days), and a roaster ratings digest.
 6. If any roaster report failed, append a `## Report Generation Failures` section to digest outputs.
 
@@ -64,6 +65,7 @@ Override on the CLI:
 python main.py --language zh --http-concurrency 1 --skip-llm
 python main.py --llm-timeout-s 600
 python main.py --seen-db-path logs/seen_products.db
+python main.py --ask "I want decaf"
 python main.py --digest-only        # regenerate digests from today's roaster reports (UTC)
 python main.py --resume             # retry only missing/failed reports today, then rebuild digests
 python main.py --llm-backend mlx --mlx-runtime vlm --mlx-model mlx-community/Qwen3.5-9B-MLX-8bit
@@ -83,10 +85,16 @@ Pass a JSON config file and override selectively with CLI flags. CLI > config > 
 python main.py --config config/settings.json --language en
 ```
 
+Personalization can be passed the same way:
+```bash
+python main.py --config config/settings.json --ask "I want decaf"
+```
+
 Example `config/settings.json`:
 ```json
 {
   "language": "zh",
+  "user_ask": "I want decaf",
   "llm_backend": "mlx",
   "model": "mlx-community/Qwen3.5-9B-MLX-8bit",
   "digest_model": "mlx-community/Qwen3.5-9B-MLX-8bit",
@@ -127,6 +135,8 @@ Notes:
 - Plain `python main.py` now defaults to the local MLX backend.
 - `GEMINI_API_KEY` is only required when `llm_backend` is `gemini`.
 - Prompt text is intentionally shared between Gemini and local MLX runs so report quality differences are easier to attribute to the model/runtime rather than prompt differences. The local backend does not inject extra task instructions beyond transport/runtime settings.
+- Use at most one `--ask` flag or one `user_ask` value in config to steer recommendations toward your taste or constraints.
+- When an ask is present, roaster reports and digests prioritize coffees that match it, call out tradeoffs, and explicitly say when no strong match exists.
 - The current comparison baseline also uses the same decoding temperature on both backends: `1.0` for Gemini and local MLX. This was chosen to stay closer to vendor-recommended starting points and because a lower shared temperature (`0.2`) was observed to reinforce repetitive self-check loops on the small local Qwen model.
 - Descriptions are extracted from product `body_html` (when available).
 - Shopify sources rely on `products.json` and skip per-product page fetches.

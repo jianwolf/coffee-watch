@@ -13,6 +13,9 @@ def main() -> None:
         config = load_config_file(args.config)
         settings = build_settings(args, config)
         exit_code = asyncio.run(run(settings))
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        exit_code = 2
     except KeyboardInterrupt:
         exit_code = 130
     sys.exit(exit_code)
