@@ -66,6 +66,8 @@ class Settings:
     def defaults() -> "Settings":
         return Settings(
             llm_backend="mlx",
+            # Google markets this family as Gemini 3.1 Pro; the API model code remains
+            # gemini-3-pro-preview in the current Gemini SDK docs.
             model="gemini-3-pro-preview",
             digest_model="gemini-3-pro-preview",
             gemini_timeout_s=600.0,

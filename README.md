@@ -51,7 +51,7 @@ python main.py
 Gemini override:
 ```bash
 export GEMINI_API_KEY=your_key_here
-python main.py --llm-backend gemini
+python main.py --llm-backend gemini --model gemini-3-pro-preview --digest-model gemini-3-pro-preview
 ```
 
 ### CLI usage
@@ -134,6 +134,7 @@ Example `config/settings.json`:
 Notes:
 - Plain `python main.py` now defaults to the local MLX backend.
 - `GEMINI_API_KEY` is only required when `llm_backend` is `gemini`.
+- Google markets this model family as Gemini 3.1 Pro, while the current Gemini API model code used here is `gemini-3-pro-preview`.
 - Prompt text is intentionally shared between Gemini and local MLX runs so report quality differences are easier to attribute to the model/runtime rather than prompt differences. The local backend does not inject extra task instructions beyond transport/runtime settings.
 - Use at most one `--ask` flag or one `user_ask` value in config to steer recommendations toward your taste or constraints.
 - When an ask is present, roaster reports and digests prioritize coffees that match it, call out tradeoffs, and explicitly say when no strong match exists.
