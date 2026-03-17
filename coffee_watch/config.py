@@ -66,7 +66,7 @@ class Settings:
     def defaults() -> "Settings":
         return Settings(
             llm_backend="mlx",
-            model="gemini-3-flash-preview",
+            model="gemini-3-pro-preview",
             digest_model="gemini-3-pro-preview",
             gemini_timeout_s=600.0,
             mlx_model="mlx-community/Qwen3.5-9B-MLX-8bit",
