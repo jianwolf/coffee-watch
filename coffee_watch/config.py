@@ -65,8 +65,8 @@ class Settings:
     @staticmethod
     def defaults() -> "Settings":
         return Settings(
-            llm_backend="mlx",
-            model="gemini-3.1-pro-preview",
+            llm_backend="gemini",
+            model="gemini-3.1-flash-lite-preview",
             digest_model="gemini-3.1-pro-preview",
             gemini_timeout_s=600.0,
             mlx_model="mlx-community/Qwen3.5-9B-MLX-8bit",
