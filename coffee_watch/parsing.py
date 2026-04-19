@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urljoin
 
+from .catalog_parsers import parse_catalog_html
 from .config import Settings
 from .models import (
     PaginationConfig,
@@ -473,8 +474,6 @@ def parse_products_response(
             )
     text = content.decode("utf-8", errors="ignore")
     if roaster.products_parser:
-        from .catalog_parsers import parse_catalog_html
-
         parsed = parse_catalog_html(
             roaster.products_parser,
             text,

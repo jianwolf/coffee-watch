@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coffee-watch"
+version = "0.2.0"
+description = "Low-frequency monitoring agent that checks specialty coffee roasters and evaluates releases with Gemini or local MLX models."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Jian Wang" }]
+dependencies = [
+    "httpx[http2]>=0.27,<1.0",
+    "google-genai>=0.3,<2.0",
+    "pydantic>=2.4,<3.0",
+]
+
+[project.optional-dependencies]
+mlx = [
+    "mlx-lm==0.29.1; sys_platform == 'darwin'",
+    "mlx-vlm==0.3.12; sys_platform == 'darwin'",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+coffee-watch = "coffee_watch.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["coffee_watch*"]
+exclude = ["tests*", "reports*", "logs*", "config*"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra -q"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["reports", "logs", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",  # line length handled by formatter
+    "B008",  # allow function calls in default args where used intentionally
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+exclude = ["reports/", "logs/", "\\.venv/"]

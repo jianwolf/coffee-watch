@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
-
-from pydantic import BaseModel, Field, confloat
+from typing import Any, Optional
 
 
 @dataclass(frozen=True)
@@ -63,33 +61,6 @@ class VariantInfo:
     available: bool
 
 
-class CoffeeScore(BaseModel):
-    score: confloat(ge=0, le=10)
-    worth_trying: bool
-    summary: str = Field(..., description="Short, neutral summary of the coffee.")
-    rationale: str = Field(..., description="Brief, critical explanation for the score.")
-    rarity_signals: list[str] = Field(default_factory=list)
-    reputation_signals: list[str] = Field(default_factory=list)
-    confidence: confloat(ge=0, le=1) = 0.5
-
-
-class CoffeeEvaluation(BaseModel):
-    product_id: str = Field(..., description="Use the provided product_id exactly.")
-    name: str
-    url: str
-    score: confloat(ge=0, le=10)
-    worth_trying: bool
-    summary: str
-    rationale: str
-    rarity_signals: list[str] = Field(default_factory=list)
-    reputation_signals: list[str] = Field(default_factory=list)
-    confidence: confloat(ge=0, le=1) = 0.5
-
-
-class CoffeeBatchResult(BaseModel):
-    evaluations: list[CoffeeEvaluation]
-
-
 @dataclass(frozen=True)
 class ProductFieldConfig:
     name_fields: tuple[str, ...] = ("title", "name")
@@ -106,3 +77,47 @@ class PaginationConfig:
     page_size_param: Optional[str] = None
     page_size: Optional[int] = None
     stop_on_empty: bool = True
+
+
+@dataclass(frozen=True)
+class RoasterRunStatus:
+    """Structured record of a single roaster's outcome within a run.
+
+    Persisted as ``reports/YYYYMMDD-<slug>.status.json`` so resume/digest logic
+    does not need to grep generated markdown.
+    """
+
+    roaster: str
+    run_id: str
+    status: str  # success | failure | empty | skipped
+    attempts: int
+    report_path: Optional[str]
+    products_found: int
+    new_products: int
+    fetched_pages: int
+    platform: str
+    classified_by_source: dict[str, int] = field(default_factory=dict)
+    undated: int = 0
+    outside_window: int = 0
+    grounding_queries: tuple[str, ...] = ()
+    completed_at: str = ""
+    note: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "roaster": self.roaster,
+            "run_id": self.run_id,
+            "status": self.status,
+            "attempts": self.attempts,
+            "report_path": self.report_path,
+            "products_found": self.products_found,
+            "new_products": self.new_products,
+            "fetched_pages": self.fetched_pages,
+            "platform": self.platform,
+            "classified_by_source": dict(self.classified_by_source),
+            "undated": self.undated,
+            "outside_window": self.outside_window,
+            "grounding_queries": list(self.grounding_queries),
+            "completed_at": self.completed_at,
+            "note": self.note,
+        }

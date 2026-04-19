@@ -1,898 +1,222 @@
+"""Top-level run orchestration.
+
+Responsibilities:
+- parse settings & set up logging
+- load roasters and denylist
+- dispatch to one of three modes (digest-only, resume, full)
+- finalize each mode by building and writing digest reports
+"""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-import logging.handlers
 import os
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
-from urllib.parse import urlsplit
-from urllib.robotparser import RobotFileParser
+from typing import Any
 
 import httpx
 
+from .classify import (
+    NEW_PRODUCTS_WINDOW_DAYS,
+    build_filtered_new_items_for_digest,
+)
 from .config import Settings
 from .constants import USER_AGENT
-from .llm import CoffeeWatchLLM, backend_label, format_grounding_metadata
+from .context import RunContext
+from .http_limits import PerHostLimiter
+from .llm_backend import backend_label, create_llm_backend
 from .logging_utils import setup_logging
-from .models import ProductCandidate, RoasterSource
-from .network import (
-    fetch_product_page_text,
-    fetch_products_for_roaster,
-    fetch_wix_product_sitemap_lastmods,
-    merge_headers,
+from .models import RoasterSource
+from .parsing import load_denylist, load_roasters
+from .prompts import normalize_language
+from .report_status import (
+    collect_missing_roaster_names,
+    collect_resume_targets,
+    extract_failed_roasters_from_reports,
+    merge_failed_roaster_names,
+    today_roaster_report_paths,
+)
+from .reporting import load_items_for_reports, load_reports_for_digest
+from .roaster_pipeline import (
+    build_digest_jobs,
+    generate_digest_reports,
+    process_roaster,
+    save_digest_prompts,
 )
 from .seen_products import SeenProducts
-from .parsing import load_denylist, load_roasters
-from .prompts import (
-    build_batch_prompt,
-    build_digest_prompt,
-    build_new_products_digest_prompt,
-    build_roaster_ratings_digest_prompt,
-    format_coffee_list,
-    normalize_language,
-)
-from .text_utils import format_variant_lines, sanitize_html_to_text, trim_text_at_phrases
-from .reporting import (
-    extract_coffee_list_items,
-    init_report,
-    load_reports_for_digest,
-    make_report_path,
-    report_file_path,
-    save_prompt_text,
-)
-from .url_utils import normalize_base_url
+
+logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class DigestJob:
-    name: str
-    prompt: str
-
-
-ROASTER_GEMINI_MAX_ATTEMPTS = 10
-ROASTER_REPORT_FAILURE_SUFFIX = "roaster report generation has failed"
-NEW_PRODUCTS_WINDOW_DAYS = 7
-LEGACY_EMPTY_REPORT_LINE = "Gemini returned no text for this roaster."
-EMPTY_REPORT_LINE = "LLM returned no text for this roaster."
-
-
-def _build_roaster_failure_line(roaster_name: str) -> str:
-    return f"{roaster_name} {ROASTER_REPORT_FAILURE_SUFFIX}"
-
-
-def _extract_failed_roasters_from_reports(
+async def _finalize_digests(
+    ctx: RunContext,
     reports: list[tuple[str, str]],
-) -> list[str]:
-    failed: list[str] = []
-    seen: set[str] = set()
-    for _, text in reports:
-        roaster_name = ""
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if line.startswith("Roaster: "):
-                roaster_name = line.split("Roaster: ", 1)[1].strip()
-                continue
-            if (
-                line in {LEGACY_EMPTY_REPORT_LINE, EMPTY_REPORT_LINE}
-                and roaster_name
-                and roaster_name not in seen
-            ):
-                seen.add(roaster_name)
-                failed.append(roaster_name)
-                continue
-            if line.endswith(ROASTER_REPORT_FAILURE_SUFFIX):
-                candidate = line[: -len(ROASTER_REPORT_FAILURE_SUFFIX)].strip()
-                failure_name = candidate or roaster_name
-                if failure_name and failure_name not in seen:
-                    seen.add(failure_name)
-                    failed.append(failure_name)
-    return failed
-
-
-def _append_failed_roaster_lines_to_digest(
-    digest_text: str,
     failed_roasters: list[str],
-) -> str:
-    if not failed_roasters:
-        return digest_text
-    failure_lines = [_build_roaster_failure_line(name) for name in failed_roasters]
-    footer = "## Report Generation Failures\n\n" + "\n".join(failure_lines)
-    base = digest_text.strip()
-    if base:
-        return f"{base}\n\n{footer}\n"
-    return f"{footer}\n"
-
-
-def _merge_failed_roaster_names(*groups: list[str]) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    for group in groups:
-        for name in group:
-            cleaned = name.strip()
-            if cleaned and cleaned not in seen:
-                seen.add(cleaned)
-                merged.append(cleaned)
-    return merged
-
-
-def _report_indicates_roaster_failure(text: str) -> bool:
-    if LEGACY_EMPTY_REPORT_LINE in text or EMPTY_REPORT_LINE in text:
-        return True
-    for raw_line in text.splitlines():
-        if raw_line.strip().endswith(ROASTER_REPORT_FAILURE_SUFFIX):
-            return True
-    return False
-
-
-def _digest_report_name(job_name: str) -> str:
-    names = {
-        "digest": "z-digest",
-        "new-digest": "z-new-digest",
-        "roaster-digest": "z-roaster-digest",
-    }
-    return names.get(job_name, f"z-{job_name}")
-
-
-def _digest_report_filenames(run_id: str) -> set[str]:
-    current_names = {
-        _digest_report_name("digest"),
-        _digest_report_name("new-digest"),
-        _digest_report_name("roaster-digest"),
-    }
-    legacy_names = {"digest", "new-digest", "roaster-digest"}
-    all_names = current_names | legacy_names
-    return {f"{run_id}-{name}.md" for name in all_names}
-
-
-def _today_roaster_report_paths(reports_dir: Path, run_id: str) -> list[Path]:
-    digest_files = _digest_report_filenames(run_id)
-    paths = [path for path in reports_dir.glob(f"{run_id}-*.md") if path.name not in digest_files]
-    return sorted(paths, key=lambda path: path.name)
-
-
-def _collect_resume_targets(
-    roasters: list[RoasterSource],
-    reports_dir: Path,
-    run_id: str,
-    logger: logging.Logger,
-) -> list[RoasterSource]:
-    targets: list[RoasterSource] = []
-    for roaster in roasters:
-        report_path = make_report_path(reports_dir, roaster.name, run_id)
-        if not report_path.exists():
-            logger.info(
-                "Resume mode: report missing for %s (%s); scheduling retry.",
-                roaster.name,
-                report_path,
-            )
-            targets.append(roaster)
-            continue
-        try:
-            text = report_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            logger.warning(
-                "Resume mode: failed to read report for %s (%s): %s; scheduling retry.",
-                roaster.name,
-                report_path,
-                exc,
-            )
-            targets.append(roaster)
-            continue
-        if _report_indicates_roaster_failure(text):
-            logger.info(
-                "Resume mode: failed report detected for %s (%s); scheduling retry.",
-                roaster.name,
-                report_path,
-            )
-            targets.append(roaster)
-    return targets
-
-
-def _collect_missing_roaster_names(
-    roasters: list[RoasterSource],
-    reports_dir: Path,
-    run_id: str,
-) -> list[str]:
-    missing: list[str] = []
-    for roaster in roasters:
-        report_path = make_report_path(reports_dir, roaster.name, run_id)
-        if not report_path.exists():
-            missing.append(roaster.name)
-    return missing
-
-
-def _parse_iso_date(value: str) -> Optional[date]:
-    if not value:
-        return None
-    cleaned = value.strip()
-    if cleaned.endswith("Z"):
-        cleaned = f"{cleaned[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(cleaned)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).date()
-
-
-def _parse_http_date(value: str) -> Optional[date]:
-    if not value:
-        return None
-    try:
-        parsed = parsedate_to_datetime(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).date()
-
-
-def _parse_wix_lastmod(value: str) -> Optional[date]:
-    return _parse_http_date(value) or _parse_iso_date(value)
-
-
-def _resolve_update_date(
-    product: ProductCandidate,
-    http_last_modified: str,
-    wix_lastmod: str,
-    seen_at: str,
-) -> tuple[Optional[date], str]:
-    published_date = _parse_iso_date(product.shopify_published_at)
-    if published_date:
-        return published_date, "shopify_published_at"
-    http_date = _parse_http_date(http_last_modified)
-    if http_date:
-        return http_date, "http_last_modified"
-    wix_date = _parse_wix_lastmod(wix_lastmod)
-    if wix_date:
-        return wix_date, "wix_lastmod"
-    seen_date = _parse_iso_date(seen_at)
-    if seen_date:
-        return seen_date, "seen_at"
-    return None, "unknown"
-
-
-def classify_new_products(
-    products: list[ProductCandidate],
-    run_day: date,
-    seen_products: SeenProducts,
-    descriptions_by_url: dict[str, str],
-    http_last_modified_by_url: dict[str, str],
-    wix_lastmod_by_url: dict[str, str],
-    platform: str,
-    window_days: int = NEW_PRODUCTS_WINDOW_DAYS,
-    persist_seen: bool = True,
-) -> tuple[set[str], dict[str, int], int, int]:
-    new_urls: set[str] = set()
-    by_source = {
-        "shopify_published_at": 0,
-        "http_last_modified": 0,
-        "wix_lastmod": 0,
-        "seen_at": 0,
-    }
-    undated = 0
-    outside_window = 0
-    now_iso = datetime.now(timezone.utc).isoformat() if persist_seen else ""
-    days = max(1, window_days)
-    window_start = run_day - timedelta(days=days - 1)
-    for product in products:
-        description = descriptions_by_url.get(product.url, "")
-        seen_hash = seen_products.compute_hash(product.url, product.name, description)
-        seen_entry = seen_products.get(seen_hash)
-        seen_at = seen_entry.first_seen_at if seen_entry else ""
-        http_last_modified = http_last_modified_by_url.get(product.url, "")
-        wix_lastmod = wix_lastmod_by_url.get(product.url, "")
-
-        updated_date, source = _resolve_update_date(
-            product, http_last_modified, wix_lastmod, seen_at
-        )
-        if updated_date is None:
-            undated += 1
-            if persist_seen:
-                source = "undated"
-                updated_date = run_day
-            else:
-                outside_window += 1
-                continue
-
-        if persist_seen:
-            seen_products.record(
-                seen_hash,
-                product.url,
-                product.name,
-                description,
-                now_iso,
-                shopify_updated_at=product.shopify_updated_at,
-                roaster=product.source,
-                platform=platform,
-            )
-
-        if updated_date < window_start or updated_date > run_day:
-            outside_window += 1
-            continue
-        new_urls.add(product.url)
-        if source in by_source:
-            by_source[source] += 1
-    return new_urls, by_source, undated, outside_window
-
-
-def build_filtered_new_items_for_digest(
-    reports: list[tuple[str, str]],
-    run_id: str,
-    settings: Settings,
-    logger: logging.Logger,
-    mode_label: str,
-    *,
-    window_days: int = NEW_PRODUCTS_WINDOW_DAYS,
-    persist_seen: bool = False,
-) -> list[dict[str, Any]]:
-    new_items = extract_coffee_list_items(reports, logger)
-    filtered_new_items = new_items
-    if not new_items:
-        return filtered_new_items
-
-    seen_products = SeenProducts(settings.seen_db_path, logger)
-    try:
-        digest_products: list[ProductCandidate] = []
-        descriptions_by_url: dict[str, str] = {}
-        http_last_modified_by_url: dict[str, str] = {}
-        wix_lastmod_by_url: dict[str, str] = {}
-        for item in new_items:
-            url = str(item.get("url", "") or "").strip()
-            product = ProductCandidate(
-                product_id=str(item.get("product_id", "") or ""),
-                name=str(item.get("name", "") or ""),
-                url=url,
-                source=str(item.get("roaster", "") or ""),
-                list_price=str(item.get("list_price", "") or ""),
-                list_badge=str(item.get("badge", "") or ""),
-                body_html="",
-                variants=(),
-                shopify_updated_at=str(item.get("shopify_updated_at", "") or ""),
-                shopify_published_at=str(item.get("shopify_published_at", "") or ""),
-            )
-            digest_products.append(product)
-            descriptions_by_url[url] = str(item.get("description", "") or "")
-        run_day = datetime.strptime(run_id, "%Y%m%d").date()
-        new_urls, by_source, undated, outside_window = classify_new_products(
-            digest_products,
-            run_day,
-            seen_products,
-            descriptions_by_url,
-            http_last_modified_by_url,
-            wix_lastmod_by_url,
-            "unknown",
-            window_days=window_days,
-            persist_seen=persist_seen,
-        )
-        filtered_new_items = [
-            item
-            for item, product in zip(new_items, digest_products)
-            if product.url and product.url in new_urls
-        ]
-        logger.info(
-            "%s new products (last %d days ending %s UTC): %d "
-            "[shopify_published_at=%d, http_last_modified=%d, "
-            "wix_lastmod=%d, seen_at=%d, "
-            "undated=%d, outside_window=%d].",
-            mode_label,
-            max(1, window_days),
-            run_id,
-            len(filtered_new_items),
-            by_source["shopify_published_at"],
-            by_source["http_last_modified"],
-            by_source["wix_lastmod"],
-            by_source["seen_at"],
-            undated,
-            outside_window,
-        )
-    finally:
-        seen_products.close()
-    return filtered_new_items
-
-
-def build_digest_jobs(
-    reports: list[tuple[str, str]],
-    new_items: list[dict[str, Any]],
-    language: str,
-    max_chars: int,
-    include_new_digest: bool,
-    user_ask: str,
-) -> list[DigestJob]:
-    jobs: list[DigestJob] = []
-    if reports:
-        jobs.append(DigestJob("digest", build_digest_prompt(reports, language, user_ask)))
-        jobs.append(
-            DigestJob(
-                "roaster-digest",
-                build_roaster_ratings_digest_prompt(reports, language, user_ask),
-            )
-        )
-    if include_new_digest and new_items:
-        jobs.append(
-            DigestJob(
-                "new-digest",
-                build_new_products_digest_prompt(new_items, max_chars, language, user_ask),
-            )
-        )
-    return jobs
-
-
-def save_digest_prompts(
-    jobs: list[DigestJob],
-    assets_dir: Path,
-    reports_dir: Path,
-    run_id: str,
-    save_prompt: bool,
-    logger: logging.Logger,
 ) -> None:
-    for job in jobs:
-        prompt_path = save_prompt_text(assets_dir, run_id, job.name, job.prompt)
-        logger.info("Saved LLM %s prompt to %s", job.name, prompt_path)
-        if save_prompt:
-            report_prompt_path = save_prompt_text(
-                reports_dir, run_id, job.name, job.prompt
-            )
-            logger.info(
-                "Saved LLM %s prompt copy to %s", job.name, report_prompt_path
-            )
-
-
-async def generate_digest_reports(
-    jobs: list[DigestJob],
-    llm_client: CoffeeWatchLLM,
-    settings: Settings,
-    logger: logging.Logger,
-    run_id: str,
-    failed_roasters: Optional[list[str]] = None,
-) -> None:
-    if not jobs:
-        return
-    failed_names = failed_roasters or []
-
-    async def _run_digest_job(job: DigestJob) -> tuple[DigestJob, Optional[str]]:
-        digest = await llm_client.generate_digest_markdown(
-            settings.digest_model,
-            job.prompt,
-            logger,
-            settings.gemini_timeout_s,
-            request_name=job.name,
-        )
-        return job, digest
-
-    tasks = [asyncio.create_task(_run_digest_job(job)) for job in jobs]
-
-    for task in asyncio.as_completed(tasks):
-        job, digest = await task
-        output_text = _append_failed_roaster_lines_to_digest(digest or "", failed_names)
-        if output_text and settings.save_report:
-            digest_path = report_file_path(
-                settings.reports_dir, _digest_report_name(job.name), run_id, None, "md"
-            )
-            digest_path.write_text(output_text, encoding="utf-8")
-            logger.info("Saved %s report to %s", job.name, digest_path)
-            if not digest:
-                logger.warning(
-                    "LLM returned no %s text; saved failure-only digest.", job.name
-                )
-        elif not digest:
-            logger.warning("LLM returned no %s text.", job.name)
-
-
-async def process_roaster(
-    roaster: RoasterSource,
-    http_client: httpx.AsyncClient,
-    settings: Settings,
-    robots_cache: dict[str, RobotFileParser],
-    run_id: str,
-    assets_dir: Path,
-    http_semaphore: asyncio.Semaphore,
-    logger: logging.Logger,
-    llm_client: CoffeeWatchLLM,
-    language: str,
-    denylist: set[str],
-    seen_products: SeenProducts,
-) -> tuple[Optional[Path], list[dict[str, Any]]]:
-    try:
-        return await _process_roaster_inner(
-            roaster,
-            http_client,
+    settings = ctx.settings
+    log = ctx.logger
+    filtered_new_items: list[dict[str, Any]] = []
+    if settings.new_products_digest:
+        filtered_new_items = build_filtered_new_items_for_digest(
+            reports,
+            ctx.run_id,
             settings,
-            robots_cache,
-            run_id,
-            assets_dir,
-            http_semaphore,
-            logger,
-            llm_client,
-            language,
-            denylist,
-            seen_products,
-        )
-    except Exception as exc:
-        logger.exception("Roaster processing failed for %s: %s", roaster.name, exc)
-        return None, []
-
-
-async def _process_roaster_inner(
-    roaster: RoasterSource,
-    http_client: httpx.AsyncClient,
-    settings: Settings,
-    robots_cache: dict[str, RobotFileParser],
-    run_id: str,
-    assets_dir: Path,
-    http_semaphore: asyncio.Semaphore,
-    logger: logging.Logger,
-    llm_client: CoffeeWatchLLM,
-    language: str,
-    denylist: set[str],
-    seen_products: SeenProducts,
-) -> tuple[Optional[Path], list[dict[str, Any]]]:
-    base_url = normalize_base_url(roaster.base_url)
-    domain = urlsplit(base_url).netloc.lower()
-    if domain and domain in denylist:
-        logger.info("Skipping denylisted domain %s", domain)
-        return None, []
-
-    products = await fetch_products_for_roaster(
-        http_client,
-        roaster,
-        settings,
-        robots_cache,
-        assets_dir,
-        run_id,
-        http_semaphore,
-        logger,
-    )
-    if not products:
-        logger.info("No products parsed for %s", roaster.name)
-        return None, []
-
-    new_products = list(products)
-    run_day = datetime.strptime(run_id, "%Y%m%d").date()
-    coffee_list = ""
-    logger.info(
-        "Found %d products for %s (%d to evaluate).",
-        len(products),
-        roaster.name,
-        len(new_products),
-    )
-
-    page_text_by_id = {product.product_id: "" for product in new_products}
-    http_last_modified_by_url: dict[str, str] = {}
-    wix_lastmod_by_url: dict[str, str] = {}
-    page_fetch_count = 0
-
-    def write_report(
-        report_path: Path,
-        note: Optional[str] = None,
-        body: Optional[str] = None,
-        grounding_payload: Optional[dict[str, Any]] = None,
-    ) -> None:
-        init_report(report_path, roaster.name, run_id)
-        with report_path.open("a", encoding="utf-8") as handle:
-            if note:
-                handle.write(f"\n{note}\n")
-            if body:
-                handle.write(body)
-                handle.write("\n")
-            grounding_block = format_grounding_metadata(grounding_payload or {})
-            if grounding_block:
-                handle.write("\n")
-                handle.write(grounding_block)
-            if coffee_list:
-                handle.write("\n")
-                handle.write(coffee_list)
-        logger.info("Saved roaster report to %s", report_path)
-
-    def build_descriptions_by_url() -> dict[str, str]:
-        descriptions: dict[str, str] = {}
-        for product in new_products:
-            body_text = ""
-            if product.body_html:
-                body_text = sanitize_html_to_text(
-                    product.body_html,
-                    settings.batch_page_text_max_chars,
-                    remove_boilerplate=False,
-                )
-            description = page_text_by_id.get(product.product_id, "") or body_text
-            descriptions[product.url] = description
-        return descriptions
-
-    if roaster.platform == "wix":
-        sitemap_headers = merge_headers(
-            {"User-Agent": USER_AGENT},
-            roaster.product_page_headers,
-            logger,
-            f"{roaster.name} sitemap",
-        )
-        sitemap_lastmods = await fetch_wix_product_sitemap_lastmods(
-            http_client,
-            roaster,
-            settings,
-            robots_cache,
-            logger,
-            sitemap_headers,
-            http_semaphore,
-            jitter_multiplier=roaster.jitter_multiplier,
-        )
-        if sitemap_lastmods:
-            wix_lastmod_by_url.update(sitemap_lastmods)
-
-    if settings.fetch_only:
-        logger.info(
-            "Fetch-only mode enabled; skipping product page fetches and LLM."
-        )
-        descriptions_by_url = build_descriptions_by_url()
-        new_urls, by_source, undated, outside_window = classify_new_products(
-            new_products,
-            run_day,
-            seen_products,
-            descriptions_by_url,
-            http_last_modified_by_url,
-            wix_lastmod_by_url,
-            roaster.platform,
+            log,
+            "Digest",
+            items_loader=lambda r: load_items_for_reports(
+                r, settings.reports_dir, ctx.run_id, log
+            ),
             window_days=NEW_PRODUCTS_WINDOW_DAYS,
-            persist_seen=True,
+            persist_seen=False,
         )
-        report_path = None
-        if settings.save_report:
-            coffee_list = format_coffee_list(
-                new_products,
-                page_text_by_id,
-                settings.batch_page_text_max_chars,
-            )
-            report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
-            write_report(report_path, note="Fetch-only mode enabled; no LLM output.")
-        logger.info(
-            "New products for %s (last %d days ending %s UTC): %d "
-            "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
-            "seen_at=%d, "
-            "undated=%d, outside_window=%d]. Page text fetched for %d products.",
-            roaster.name,
-            NEW_PRODUCTS_WINDOW_DAYS,
-            run_id,
-            len(new_urls),
-            by_source["shopify_published_at"],
-            by_source["http_last_modified"],
-            by_source["wix_lastmod"],
-            by_source["seen_at"],
-            undated,
-            outside_window,
-            page_fetch_count,
-        )
-        return report_path, []
-
-    if roaster.platform != "shopify":
-        page_headers = merge_headers(
-            {"User-Agent": USER_AGENT},
-            roaster.product_page_headers,
-            logger,
-            f"{roaster.name} product page",
-        )
-        products_needing_pages = [
-            product for product in new_products if not product.body_html
-        ]
-        page_fetch_count = len(products_needing_pages)
-        if products_needing_pages:
-            page_tasks = [
-                fetch_product_page_text(
-                    http_client,
-                    product,
-                    settings,
-                    robots_cache,
-                    logger,
-                    page_headers,
-                    http_semaphore,
-                    jitter_multiplier=roaster.jitter_multiplier,
-                )
-                for product in products_needing_pages
-            ]
-            page_results = await asyncio.gather(*page_tasks)
-            for product, (text, last_modified) in zip(
-                products_needing_pages, page_results
-            ):
-                page_text_by_id[product.product_id] = trim_text_at_phrases(
-                    text, roaster.page_text_stop_phrases
-                )
-                if last_modified:
-                    http_last_modified_by_url[product.url] = last_modified
-    else:
-        logger.info(
-            "Skipping product page fetches for %s (platform shopify).", roaster.name
-        )
-
-    descriptions_by_url = build_descriptions_by_url()
-    new_urls, by_source, undated, outside_window = classify_new_products(
-        new_products,
-        run_day,
-        seen_products,
-        descriptions_by_url,
-        http_last_modified_by_url,
-        wix_lastmod_by_url,
-        roaster.platform,
-        window_days=NEW_PRODUCTS_WINDOW_DAYS,
-        persist_seen=True,
-    )
-    new_items: list[dict[str, Any]] = []
-    if settings.save_report and new_urls:
-        for product in new_products:
-            if product.url not in new_urls:
-                continue
-            description = descriptions_by_url.get(product.url, "")
-            variant_lines = format_variant_lines(product.variants)
-            new_items.append(
-                {
-                    "roaster": roaster.name,
-                    "product_id": product.product_id,
-                    "name": product.name,
-                    "url": product.url,
-                    "list_price": product.list_price,
-                    "badge": product.list_badge,
-                    "variant_lines": variant_lines,
-                    "description": description,
-                }
-            )
-
-    prompt = build_batch_prompt(
-        roaster.name,
-        new_products,
-        page_text_by_id,
+    digest_jobs = build_digest_jobs(
+        reports,
+        filtered_new_items,
+        ctx.language,
         settings.batch_page_text_max_chars,
-        language,
+        settings.new_products_digest,
         settings.user_ask,
     )
-    prompt_path = save_prompt_text(assets_dir, run_id, roaster.name, prompt)
-    logger.info("Saved LLM prompt for %s to %s", roaster.name, prompt_path)
-    if settings.save_prompt:
-        report_prompt_path = save_prompt_text(
-            settings.reports_dir, run_id, roaster.name, prompt
-        )
-        logger.info(
-            "Saved LLM prompt copy for %s to %s", roaster.name, report_prompt_path
-        )
-
-    if settings.skip_gemini:
-        logger.info("LLM skipped by configuration.")
-        report_path = None
-        if settings.save_report:
-            coffee_list = format_coffee_list(
-                new_products,
-                page_text_by_id,
-                settings.batch_page_text_max_chars,
-            )
-            report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
-            write_report(report_path, note="LLM skipped by configuration.")
-        logger.info(
-            "New products for %s (last %d days ending %s UTC): %d "
-            "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
-            "seen_at=%d, "
-            "undated=%d, outside_window=%d]. Page text fetched for %d products.",
-            roaster.name,
-            NEW_PRODUCTS_WINDOW_DAYS,
-            run_id,
-            len(new_urls),
-            by_source["shopify_published_at"],
-            by_source["http_last_modified"],
-            by_source["wix_lastmod"],
-            by_source["seen_at"],
-            undated,
-            outside_window,
-            page_fetch_count,
-        )
-        return report_path, new_items
-
-    markdown: Optional[str] = None
-    grounding: Optional[dict[str, Any]] = None
-    for attempt in range(1, ROASTER_GEMINI_MAX_ATTEMPTS + 1):
-        markdown, grounding = await llm_client.evaluate_roaster_markdown(
-            settings.model,
-            roaster.name,
-            prompt,
-            logger,
-            settings.gemini_timeout_s,
-        )
-        if markdown:
-            if attempt > 1:
-                logger.info(
-                    "LLM succeeded for %s on attempt %d/%d.",
-                    roaster.name,
-                    attempt,
-                    ROASTER_GEMINI_MAX_ATTEMPTS,
-                )
-            break
-        logger.warning(
-            "LLM returned no text for %s (attempt %d/%d).",
-            roaster.name,
-            attempt,
-            ROASTER_GEMINI_MAX_ATTEMPTS,
-        )
-    if markdown is None:
-        logger.warning(
-            "LLM returned no text for %s after %d attempts.",
-            roaster.name,
-            ROASTER_GEMINI_MAX_ATTEMPTS,
-        )
-        report_path = None
-        if settings.save_report:
-            coffee_list = format_coffee_list(
-                new_products,
-                page_text_by_id,
-                settings.batch_page_text_max_chars,
-            )
-            report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
-            write_report(
-                report_path,
-                note=_build_roaster_failure_line(roaster.name),
-                grounding_payload=grounding,
-            )
-        logger.info(
-            "New products for %s (last %d days ending %s UTC): %d "
-            "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
-            "seen_at=%d, "
-            "undated=%d, outside_window=%d]. Page text fetched for %d products.",
-            roaster.name,
-            NEW_PRODUCTS_WINDOW_DAYS,
-            run_id,
-            len(new_urls),
-            by_source["shopify_published_at"],
-            by_source["http_last_modified"],
-            by_source["wix_lastmod"],
-            by_source["seen_at"],
-            undated,
-            outside_window,
-            page_fetch_count,
-        )
-        return report_path, new_items
-    if settings.save_report:
-        coffee_list = format_coffee_list(
-            new_products,
-            page_text_by_id,
-            settings.batch_page_text_max_chars,
-        )
-        report_path = make_report_path(settings.reports_dir, roaster.name, run_id)
-        write_report(report_path, body=markdown, grounding_payload=grounding)
-    else:
-        report_path = None
-    logger.info(
-        "New products for %s (last %d days ending %s UTC): %d "
-        "[shopify_published_at=%d, http_last_modified=%d, wix_lastmod=%d, "
-        "seen_at=%d, "
-        "undated=%d, outside_window=%d]. Page text fetched for %d products.",
-        roaster.name,
-        NEW_PRODUCTS_WINDOW_DAYS,
-        run_id,
-        len(new_urls),
-        by_source["shopify_published_at"],
-        by_source["http_last_modified"],
-        by_source["wix_lastmod"],
-        by_source["seen_at"],
-        undated,
-        outside_window,
-        page_fetch_count,
+    if not digest_jobs:
+        return
+    save_digest_prompts(
+        digest_jobs,
+        ctx.assets_dir,
+        settings.reports_dir,
+        ctx.run_id,
+        settings.save_prompt,
+        log,
     )
-    return report_path, new_items
+    if settings.skip_llm:
+        log.info("Digest LLM calls skipped by configuration.")
+        return
+    await generate_digest_reports(
+        digest_jobs,
+        ctx.llm,
+        settings,
+        log,
+        ctx.run_id,
+        failed_roasters=failed_roasters,
+    )
+
+
+async def _run_roasters(
+    ctx: RunContext,
+    target_roasters: list[RoasterSource],
+) -> tuple[list[Path], list[str]]:
+    if not target_roasters:
+        return [], []
+    tasks = [
+        asyncio.create_task(process_roaster(ctx, roaster))
+        for roaster in target_roasters
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    report_paths: list[Path] = []
+    failed_names: list[str] = []
+    for roaster, result in zip(target_roasters, results):
+        if isinstance(result, Exception):
+            ctx.logger.exception(
+                "Roaster task for %s raised: %s", roaster.name, result
+            )
+            failed_names.append(roaster.name)
+            continue
+        path, _items, status = result
+        if path:
+            report_paths.append(path)
+        if status.status in {"failure", "empty"}:
+            failed_names.append(roaster.name)
+    return report_paths, failed_names
+
+
+async def _run_digest_only(ctx: RunContext) -> int:
+    settings = ctx.settings
+    log = ctx.logger
+    report_paths = today_roaster_report_paths(settings.reports_dir, ctx.run_id)
+    if not report_paths:
+        log.error(
+            "Digest-only mode: no reports found for %s in %s",
+            ctx.run_id,
+            settings.reports_dir,
+        )
+        return 1
+    reports = load_reports_for_digest(report_paths, log)
+    if not reports:
+        log.error("Digest-only mode: no readable reports found for %s.", ctx.run_id)
+        return 1
+    failed_roasters = extract_failed_roasters_from_reports(
+        reports, settings.reports_dir, ctx.run_id
+    )
+    await _finalize_digests(ctx, reports, failed_roasters)
+    return 0
+
+
+async def _run_resume(
+    ctx: RunContext,
+    roasters: list[RoasterSource],
+) -> int:
+    settings = ctx.settings
+    log = ctx.logger
+    roasters_to_retry = collect_resume_targets(
+        roasters, settings.reports_dir, ctx.run_id, log
+    )
+    log.info(
+        "Resume mode: found %d missing/failed reports out of %d configured roasters.",
+        len(roasters_to_retry),
+        len(roasters),
+    )
+    if roasters_to_retry:
+        await _run_roasters(ctx, roasters_to_retry)
+    report_paths = today_roaster_report_paths(settings.reports_dir, ctx.run_id)
+    reports = load_reports_for_digest(report_paths, log) if report_paths else []
+    if not reports:
+        log.error("Resume mode: no readable reports found for %s.", ctx.run_id)
+        return 1
+    missing_roasters = collect_missing_roaster_names(
+        roasters, settings.reports_dir, ctx.run_id
+    )
+    if missing_roasters:
+        log.warning(
+            "Resume mode: reports still missing for %d roasters: %s",
+            len(missing_roasters),
+            ", ".join(missing_roasters),
+        )
+    failed_roasters = merge_failed_roaster_names(
+        extract_failed_roasters_from_reports(reports, settings.reports_dir, ctx.run_id),
+        missing_roasters,
+    )
+    if settings.save_report:
+        await _finalize_digests(ctx, reports, failed_roasters)
+    return 0
+
+
+async def _run_full(
+    ctx: RunContext,
+    roasters: list[RoasterSource],
+) -> int:
+    settings = ctx.settings
+    log = ctx.logger
+    report_paths, _failed = await _run_roasters(ctx, roasters)
+    reports: list[tuple[str, str]] = []
+    failed_roasters: list[str] = []
+    if report_paths:
+        reports = load_reports_for_digest(report_paths, log)
+        failed_roasters = extract_failed_roasters_from_reports(
+            reports, settings.reports_dir, ctx.run_id
+        )
+    if settings.save_report:
+        await _finalize_digests(ctx, reports, failed_roasters)
+    return 0
 
 
 async def run(settings: Settings) -> int:
-    setup_logging(settings.log_level)
-    settings.log_path.parent.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.handlers.RotatingFileHandler(
-        settings.log_path, maxBytes=5_000_000, backupCount=5, encoding="utf-8"
-    )
-    file_handler.setFormatter(
-        logging.Formatter(fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
-    )
-    logging.getLogger().addHandler(file_handler)
-    logger = logging.getLogger("coffee_watch")
+    setup_logging(settings.log_level, settings.log_path, settings.log_format)
+    log = logging.getLogger("coffee_watch")
 
-    assets_dir = settings.log_path.parent / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(
+    settings.assets_dir.mkdir(parents=True, exist_ok=True)
+    log.info(
         "Using LLM backend: backend=%s roaster=%s digest=%s",
         backend_label(settings),
         settings.model,
@@ -903,7 +227,7 @@ async def run(settings: Settings) -> int:
             f"http://{settings.mlx_host}:{settings.mlx_port}"
             + ("/v1" if settings.mlx_runtime == "lm" else "")
         )
-        logger.info(
+        log.info(
             "MLX server target: runtime=%s model=%s url=%s startup_timeout=%.1fs trust_remote_code=%s",
             settings.mlx_runtime,
             settings.mlx_model,
@@ -911,279 +235,81 @@ async def run(settings: Settings) -> int:
             settings.mlx_startup_timeout_s,
             settings.mlx_trust_remote_code,
         )
-    logger.info(
+    log.info(
         "New-products digest: %s",
         "enabled" if settings.new_products_digest else "disabled",
     )
     if settings.user_ask:
-        logger.info("User ask active: %s", settings.user_ask)
+        log.info("User ask active: %s", settings.user_ask)
 
     api_key = os.getenv("GEMINI_API_KEY")
     if settings.llm_backend == "gemini" and not api_key:
-        logger.warning("No GEMINI_API_KEY found; relying on default SDK auth.")
-    llm_client = CoffeeWatchLLM(settings, api_key, logger)
+        log.warning("No GEMINI_API_KEY found; relying on default SDK auth.")
+
+    roasters = load_roasters(settings, log)
+    if not roasters:
+        log.error("No roasters configured; exiting.")
+        return 1
+
+    raw_language = settings.language
+    language = normalize_language(raw_language)
+    if raw_language.strip().lower() != language:
+        log.info("Normalized language setting from %s to %s", raw_language, language)
+
+    denylist = load_denylist(settings.denylist_path)
+    if denylist:
+        log.info("Loaded %d denylisted domains.", len(denylist))
+
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%d")
+    timeout = httpx.Timeout(settings.http_timeout_s)
+    limiter = PerHostLimiter(
+        per_host=settings.per_host_concurrency,
+        global_cap=settings.http_concurrency,
+    )
+
+    if settings.digest_only and settings.resume:
+        log.info("Both digest-only and resume are enabled; running digest-only mode.")
+
+    t_start = time.monotonic()
+    seen_products = SeenProducts(settings.seen_db_path, log)
+    llm = create_llm_backend(settings, api_key, log)
+    exit_code = 1
     try:
-        roasters = load_roasters(settings, logger)
-        if not roasters:
-            logger.error("No roasters configured; exiting.")
-            return 1
-
-        raw_language = settings.language
-        language = normalize_language(raw_language)
-        if raw_language.strip().lower() != language:
-            logger.info(
-                "Normalized language setting from %s to %s", raw_language, language
+        async with httpx.AsyncClient(
+            http2=True,
+            headers={"User-Agent": USER_AGENT},
+            follow_redirects=True,
+            timeout=timeout,
+        ) as http_client:
+            ctx = RunContext(
+                settings=settings,
+                logger=log,
+                http_client=http_client,
+                limiter=limiter,
+                seen_products=seen_products,
+                llm=llm,
+                run_id=run_id,
+                language=language,
+                denylist=denylist,
+                assets_dir=settings.assets_dir,
             )
-
-        denylist = load_denylist(settings.denylist_path)
-        if denylist:
-            logger.info("Loaded %d denylisted domains.", len(denylist))
-
-        robots_cache: dict[str, RobotFileParser] = {}
-        run_date = datetime.now(timezone.utc).strftime("%Y%m%d")
-        run_id = run_date
-        timeout = httpx.Timeout(settings.http_timeout_s)
-        http_semaphore = asyncio.Semaphore(max(1, settings.http_concurrency))
-        failed_roasters: list[str] = []
-        if settings.digest_only and settings.resume:
-            logger.info(
-                "Both digest-only and resume are enabled; running digest-only mode."
-            )
-
-        async def run_roaster_tasks(
-            target_roasters: list[RoasterSource],
-        ) -> list[Any]:
-            if not target_roasters:
-                return []
-            seen_products = SeenProducts(settings.seen_db_path, logger)
-            try:
-                async with httpx.AsyncClient(
-                    http2=True,
-                    headers={"User-Agent": USER_AGENT},
-                    follow_redirects=True,
-                    timeout=timeout,
-                ) as http_client:
-                    tasks = [
-                        process_roaster(
-                            roaster,
-                            http_client,
-                            settings,
-                            robots_cache,
-                            run_id,
-                            assets_dir,
-                            http_semaphore,
-                            logger,
-                            llm_client,
-                            language,
-                            denylist,
-                            seen_products,
-                        )
-                        for roaster in target_roasters
-                    ]
-                    return await asyncio.gather(*tasks, return_exceptions=True)
-            finally:
-                seen_products.close()
-
-        if settings.digest_only:
-            report_paths = _today_roaster_report_paths(settings.reports_dir, run_id)
-            if not report_paths:
-                logger.error(
-                    "Digest-only mode: no reports found for %s in %s",
-                    run_id,
-                    settings.reports_dir,
-                )
-                return 1
-            reports = load_reports_for_digest(report_paths, logger)
-            if not reports:
-                logger.error(
-                    "Digest-only mode: no readable reports found for %s.", run_id
-                )
-                return 1
-            filtered_new_items: list[dict[str, Any]] = []
-            if settings.new_products_digest:
-                filtered_new_items = build_filtered_new_items_for_digest(
-                    reports,
-                    run_id,
-                    settings,
-                    logger,
-                    "Digest-only",
-                    window_days=NEW_PRODUCTS_WINDOW_DAYS,
-                    persist_seen=False,
-                )
-            failed_roasters = _extract_failed_roasters_from_reports(reports)
-            digest_jobs = build_digest_jobs(
-                reports,
-                filtered_new_items,
-                language,
-                settings.batch_page_text_max_chars,
-                settings.new_products_digest,
-                settings.user_ask,
-            )
-            save_digest_prompts(
-                digest_jobs,
-                assets_dir,
-                settings.reports_dir,
-                run_id,
-                settings.save_prompt,
-                logger,
-            )
-            if settings.skip_gemini:
-                logger.info("Digest-only mode: LLM skipped by configuration.")
-                logger.info("Run complete.")
-                return 0
-            await generate_digest_reports(
-                digest_jobs,
-                llm_client,
-                settings,
-                logger,
-                run_id,
-                failed_roasters=failed_roasters,
-            )
-            logger.info("Run complete.")
-            return 0
-
-        if settings.resume:
-            roasters_to_retry = _collect_resume_targets(
-                roasters, settings.reports_dir, run_id, logger
-            )
-            logger.info(
-                "Resume mode: found %d missing/failed reports to retry out of %d configured roasters.",
-                len(roasters_to_retry),
-                len(roasters),
-            )
-            if roasters_to_retry:
-                logger.info(
-                    "Resume mode: retrying %d roasters out of %d configured.",
-                    len(roasters_to_retry),
-                    len(roasters),
-                )
-                retry_results = await run_roaster_tasks(roasters_to_retry)
-                for result in retry_results:
-                    if isinstance(result, Exception):
-                        logger.exception("Resume mode roaster task failed: %s", result)
+            if settings.digest_only:
+                exit_code = await _run_digest_only(ctx)
+            elif settings.resume:
+                exit_code = await _run_resume(ctx, roasters)
             else:
-                logger.info(
-                    "Resume mode: no missing/failed roaster reports found for %s.",
-                    run_id,
-                )
-
-            report_paths = _today_roaster_report_paths(settings.reports_dir, run_id)
-            reports = (
-                load_reports_for_digest(report_paths, logger) if report_paths else []
-            )
-            if not reports:
-                logger.error("Resume mode: no readable reports found for %s.", run_id)
-                return 1
-            filtered_new_items: list[dict[str, Any]] = []
-            if settings.new_products_digest:
-                filtered_new_items = build_filtered_new_items_for_digest(
-                    reports,
-                    run_id,
-                    settings,
-                    logger,
-                    "Resume mode",
-                    window_days=NEW_PRODUCTS_WINDOW_DAYS,
-                    persist_seen=False,
-                )
-            missing_roasters = _collect_missing_roaster_names(
-                roasters, settings.reports_dir, run_id
-            )
-            if missing_roasters:
-                logger.warning(
-                    "Resume mode: reports still missing for %d roasters: %s",
-                    len(missing_roasters),
-                    ", ".join(missing_roasters),
-                )
-            failed_roasters = _merge_failed_roaster_names(
-                _extract_failed_roasters_from_reports(reports),
-                missing_roasters,
-            )
-            if settings.save_report:
-                digest_jobs = build_digest_jobs(
-                    reports,
-                    filtered_new_items,
-                    language,
-                    settings.batch_page_text_max_chars,
-                    settings.new_products_digest,
-                    settings.user_ask,
-                )
-                if digest_jobs:
-                    save_digest_prompts(
-                        digest_jobs,
-                        assets_dir,
-                        settings.reports_dir,
-                        run_id,
-                        settings.save_prompt,
-                        logger,
-                    )
-                    if settings.skip_gemini:
-                        logger.info("Resume mode: LLM skipped by configuration.")
-                        logger.info("Run complete.")
-                        return 0
-                    await generate_digest_reports(
-                        digest_jobs,
-                        llm_client,
-                        settings,
-                        logger,
-                        run_id,
-                        failed_roasters=failed_roasters,
-                    )
-            logger.info("Run complete.")
-            return 0
-
-        results = await run_roaster_tasks(roasters)
-
-        report_paths: list[Path] = []
-        for result in results:
-            if isinstance(result, Exception):
-                logger.exception("Roaster task failed: %s", result)
-                continue
-            path, _items = result
-            if path:
-                report_paths.append(path)
-        reports: list[tuple[str, str]] = []
-        filtered_new_items: list[dict[str, Any]] = []
-        if report_paths:
-            reports = load_reports_for_digest(report_paths, logger)
-            failed_roasters = _extract_failed_roasters_from_reports(reports)
-            if settings.new_products_digest:
-                filtered_new_items = build_filtered_new_items_for_digest(
-                    reports,
-                    run_id,
-                    settings,
-                    logger,
-                    "Run mode",
-                    window_days=NEW_PRODUCTS_WINDOW_DAYS,
-                    persist_seen=False,
-                )
-        if settings.save_report:
-            digest_jobs = build_digest_jobs(
-                reports,
-                filtered_new_items,
-                language,
-                settings.batch_page_text_max_chars,
-                settings.new_products_digest,
-                settings.user_ask,
-            )
-            if digest_jobs:
-                save_digest_prompts(
-                    digest_jobs,
-                    assets_dir,
-                    settings.reports_dir,
-                    run_id,
-                    settings.save_prompt,
-                    logger,
-                )
-                await generate_digest_reports(
-                    digest_jobs,
-                    llm_client,
-                    settings,
-                    logger,
-                    run_id,
-                    failed_roasters=failed_roasters,
-                )
-
-        logger.info("Run complete.")
-        return 0
+                exit_code = await _run_full(ctx, roasters)
     finally:
-        await llm_client.close()
+        try:
+            await llm.aclose()
+        finally:
+            seen_products.close()
+
+    elapsed = time.monotonic() - t_start
+    log.info(
+        "Run complete | mode=%s roasters=%d elapsed=%.1fs",
+        "digest-only" if settings.digest_only else ("resume" if settings.resume else "full"),
+        len(roasters),
+        elapsed,
+    )
+    return exit_code

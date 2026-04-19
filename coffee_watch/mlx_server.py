@@ -1,13 +1,12 @@
 """MLX server manager for local model inference.
 
-This module manages MLX server subprocess lifecycle:
-- Auto-starts the server with the specified model
-- Waits for server readiness via health check
-- Cleans up on exit
+Manages a ``mlx_lm.server`` / ``mlx_vlm.server`` subprocess for the duration
+of a run: starts it, blocks until healthy, and cleans up on exit.
 
 Runtime-specific base URLs:
-- `mlx_lm.server` uses `http://127.0.0.1:{port}/v1`
-- `mlx_vlm.server` uses `http://127.0.0.1:{port}`
+
+- ``mlx_lm.server``  uses ``http://127.0.0.1:{port}/v1``
+- ``mlx_vlm.server`` uses ``http://127.0.0.1:{port}``
 """
 
 from __future__ import annotations
@@ -40,8 +39,6 @@ class MLXServerManager:
         port: int = 8080,
         host: str = "127.0.0.1",
         startup_timeout: int = 900,
-        watchdog_interval: int = 30,
-        watchdog_failures: int = 3,
         health_timeout: float = 2.0,
         log_path: str | Path | None = "logs/mlx_server.log",
         trust_remote_code: bool = False,
@@ -51,8 +48,6 @@ class MLXServerManager:
         self.port = port
         self.host = host
         self.startup_timeout = startup_timeout
-        self.watchdog_interval = watchdog_interval
-        self.watchdog_failures = watchdog_failures
         self.health_timeout = health_timeout
         self.trust_remote_code = trust_remote_code
         self._process: subprocess.Popen | None = None
@@ -60,8 +55,6 @@ class MLXServerManager:
         self._base_url = f"http://{host}:{port}{base_path}"
         self._log_path = Path(log_path) if log_path else None
         self._log_file: TextIO | None = None
-        self._watchdog_thread: threading.Thread | None = None
-        self._watchdog_stop = threading.Event()
         self._lock = threading.Lock()
         self._atexit_registered = False
         self._external_server = False
@@ -109,9 +102,6 @@ class MLXServerManager:
                 self._external_server = True
                 return
             raise
-
-        if not self._external_server:
-            self._start_watchdog()
 
     def _start_process(self) -> None:
         entry_script = Path(__file__).with_name("mlx_server_entry.py")
@@ -193,7 +183,7 @@ class MLXServerManager:
             self._log_file = None
             return None
 
-    def _wait_for_ready(self, shutdown_on_timeout: bool = True) -> None:
+    def _wait_for_ready(self) -> None:
         health_url = self._health_url()
         start_time = time.time()
 
@@ -221,10 +211,7 @@ class MLXServerManager:
 
             time.sleep(2)
 
-        if shutdown_on_timeout:
-            self.stop()
-        else:
-            self._stop_process()
+        self.stop()
         manual_cmd = (
             f"mlx_lm.server --model {self.model}"
             if self.runtime == "lm"
@@ -250,65 +237,7 @@ class MLXServerManager:
             return f"http://{self.host}:{self.port}/health"
         return f"http://{self.host}:{self.port}/v1/models"
 
-    def _start_watchdog(self) -> None:
-        if self.watchdog_interval <= 0 or self.watchdog_failures <= 0:
-            return
-        if self._watchdog_thread and self._watchdog_thread.is_alive():
-            return
-        self._watchdog_stop.clear()
-        self._watchdog_thread = threading.Thread(
-            target=self._watchdog_loop,
-            name="mlx-watchdog",
-            daemon=True,
-        )
-        self._watchdog_thread.start()
-
-    def _watchdog_loop(self) -> None:
-        failures = 0
-        while not self._watchdog_stop.wait(self.watchdog_interval):
-            with self._lock:
-                process = self._process
-            if process is None:
-                continue
-            if process.poll() is not None:
-                failures += 1
-            else:
-                if self._check_health():
-                    failures = 0
-                    continue
-                failures += 1
-
-            if failures >= self.watchdog_failures:
-                failures = 0
-                logger.warning(
-                    "MLX server unresponsive; restarting | interval=%ds threshold=%d",
-                    self.watchdog_interval,
-                    self.watchdog_failures,
-                )
-                self._restart_from_watchdog()
-
-    def _restart_from_watchdog(self) -> None:
-        if self._watchdog_stop.is_set():
-            return
-        with self._lock:
-            if self._watchdog_stop.is_set():
-                return
-            self._stop_process()
-            self._start_process()
-
-        try:
-            self._wait_for_ready(shutdown_on_timeout=False)
-        except Exception as exc:
-            logger.warning("MLX watchdog restart failed | error=%s", exc)
-
     def stop(self) -> None:
-        self._watchdog_stop.set()
-        watchdog_thread = self._watchdog_thread
-        if watchdog_thread and watchdog_thread.is_alive():
-            watchdog_thread.join(timeout=5)
-            if watchdog_thread.is_alive():
-                logger.warning("MLX watchdog did not stop cleanly")
-
         with self._lock:
             if self._process is None or self._external_server:
                 self._close_log_file()

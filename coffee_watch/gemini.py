@@ -3,29 +3,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 from typing import Any, Optional
 
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
-
-
-def model_json_schema(model_cls: type[BaseModel]) -> dict[str, Any]:
-    if hasattr(model_cls, "model_json_schema"):
-        return model_cls.model_json_schema()  # type: ignore[attr-defined]
-    return model_cls.schema()  # type: ignore[no-any-return]
-
-
-def validate_model(model_cls: type[BaseModel], data: Any) -> BaseModel:
-    if hasattr(model_cls, "model_validate"):
-        return model_cls.model_validate(data)  # type: ignore[attr-defined]
-    return model_cls.parse_obj(data)  # type: ignore[call-arg]
-
-
-def validate_model_json(model_cls: type[BaseModel], text: str) -> BaseModel:
-    if hasattr(model_cls, "model_validate_json"):
-        return model_cls.model_validate_json(text)  # type: ignore[attr-defined]
-    return model_cls.parse_raw(text)  # type: ignore[call-arg]
 
 
 async def generate_content_async(client: genai.Client, **kwargs: Any) -> Any:
@@ -235,16 +217,21 @@ def format_grounding_metadata(grounding: dict[str, Any]) -> str:
     )
 
 
+def grounding_queries(grounding: Optional[dict[str, Any]]) -> list[str]:
+    if not grounding:
+        return []
+    raw = grounding.get("webSearchQueries", [])
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item)]
+
+
 def log_grounding_queries(
-    logger,
+    logger: logging.Logger,
     request_name: str,
     grounding: Optional[dict[str, Any]],
 ) -> None:
-    queries: list[str] = []
-    if grounding:
-        raw_queries = grounding.get("webSearchQueries", [])
-        if isinstance(raw_queries, list):
-            queries = [str(item) for item in raw_queries if str(item)]
+    queries = grounding_queries(grounding)
     if queries:
         logger.info(
             "Gemini grounding queries for %s: %s",
@@ -260,14 +247,15 @@ async def evaluate_roaster_markdown(
     model: str,
     roaster_name: str,
     prompt: str,
-    logger,
+    logger: logging.Logger,
     timeout_s: float,
+    temperature: float = 1.0,
 ) -> tuple[Optional[str], Optional[dict[str, Any]]]:
     grounding_tool = types.Tool(google_search=types.GoogleSearch())
     config = types.GenerateContentConfig(
         tools=[grounding_tool],
         response_mime_type="text/plain",
-        temperature=1.0,
+        temperature=temperature,
     )
 
     input_tokens: Optional[int] = None
@@ -357,13 +345,14 @@ async def generate_digest_markdown(
     client: genai.Client,
     model: str,
     prompt: str,
-    logger,
+    logger: logging.Logger,
     timeout_s: float,
+    temperature: float = 1.0,
     request_name: Optional[str] = None,
 ) -> Optional[str]:
     config = types.GenerateContentConfig(
         response_mime_type="text/plain",
-        temperature=1.0,
+        temperature=temperature,
     )
     try:
         response = await await_with_timeout(

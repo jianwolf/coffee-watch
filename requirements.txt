@@ -1,6 +1,9 @@
 # Stdlib usage: sqlite3, hashlib (sha3_512)
-httpx[http2]
-google-genai
-pydantic
+# Canonical source of dependency specifiers is pyproject.toml; this file
+# mirrors the runtime + MLX extra so `pip install -r requirements.txt`
+# still works for users who have not moved to PEP 517 installs.
+httpx[http2]>=0.27,<1.0
+google-genai>=0.3,<2.0
+pydantic>=2.4,<3.0
 mlx-lm==0.29.1; sys_platform == "darwin"
 mlx-vlm==0.3.12; sys_platform == "darwin"

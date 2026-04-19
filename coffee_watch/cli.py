@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from .config import build_settings, load_config_file, parse_args
+from .config import ConfigError, build_settings, load_config_file, parse_args
 from .runner import run
 
 
@@ -13,6 +13,9 @@ def main() -> None:
         config = load_config_file(args.config)
         settings = build_settings(args, config)
         exit_code = asyncio.run(run(settings))
+    except ConfigError as exc:
+        print(f"Invalid configuration: {exc}", file=sys.stderr)
+        exit_code = 2
     except ValueError as exc:
         print(exc, file=sys.stderr)
         exit_code = 2

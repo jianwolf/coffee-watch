@@ -14,11 +14,14 @@ import httpx
 
 from .config import Settings
 from .constants import USER_AGENT
+from .http_limits import PerHostLimiter
 from .models import PaginationConfig, ProductCandidate, ProductFieldConfig, RoasterSource
 from .parsing import parse_products_json, parse_products_response
 from .reporting import log_products_json_snippet, save_products_json, save_products_json_pretty
 from .text_utils import extract_product_jsonld_text, sanitize_html_to_text
 from .url_utils import build_url_with_params, canonicalize_url, matches_patterns
+
+logger = logging.getLogger(__name__)
 
 
 async def jitter_sleep(min_s: float, max_s: float) -> None:
@@ -33,13 +36,13 @@ async def fetch_text_with_jitter(
     client: httpx.AsyncClient,
     url: str,
     settings: Settings,
-    logger: logging.Logger,
+    log: logging.Logger,
     headers: Optional[dict[str, str]] = None,
-    semaphore: Optional[asyncio.Semaphore] = None,
+    limiter: Optional[PerHostLimiter] = None,
     jitter_multiplier: float = 1.0,
 ) -> Optional[httpx.Response]:
     retry_statuses = {429, 500, 502, 503, 504}
-    max_retries = 2
+    max_retries = max(0, settings.http_max_retries)
 
     def _retry_delay(attempt: int, response: Optional[httpx.Response]) -> float:
         if response is not None:
@@ -58,19 +61,19 @@ async def fetch_text_with_jitter(
             settings.jitter_min_s * jitter_multiplier,
             settings.jitter_max_s * jitter_multiplier,
         )
-        logger.info("HTTP GET %s", url)
+        log.info("HTTP GET %s", url)
         try:
             response = await client.get(url, headers=headers)
-            logger.info("HTTP %s %s", response.status_code, url)
+            log.info("HTTP %s %s", response.status_code, url)
             return response
         except httpx.RequestError as exc:
-            logger.warning("HTTP request failed for %s: %s", url, exc)
+            log.warning("HTTP request failed for %s: %s", url, exc)
             return None
 
     async def _attempt() -> Optional[httpx.Response]:
-        if semaphore is None:
+        if limiter is None:
             return await _run()
-        async with semaphore:
+        async with limiter.acquire(url):
             return await _run()
 
     response: Optional[httpx.Response] = None
@@ -84,7 +87,7 @@ async def fetch_text_with_jitter(
             return response
         delay = _retry_delay(attempt, response)
         sleep_for = random.uniform(0, delay)
-        logger.warning(
+        log.warning(
             "Retrying %s in %.2fs after status %s",
             url,
             sleep_for,
@@ -99,7 +102,7 @@ async def robots_allows(
     products_url: str,
     settings: Settings,
     cache: dict[str, RobotFileParser],
-    logger: logging.Logger,
+    log: logging.Logger,
     jitter_multiplier: float = 1.0,
 ) -> bool:
     parsed = urlsplit(products_url)
@@ -114,17 +117,17 @@ async def robots_allows(
         client,
         robots_url,
         settings,
-        logger,
+        log,
         jitter_multiplier=jitter_multiplier,
     )
     parser = RobotFileParser()
     if response is None:
-        logger.warning("Robots.txt fetch failed for %s; proceeding cautiously.", cache_key)
+        log.warning("Robots.txt fetch failed for %s; proceeding cautiously.", cache_key)
         parser.parse([])
         cache[cache_key] = parser
         return parser.can_fetch(USER_AGENT, products_url)
     if response.status_code >= 400:
-        logger.info("Robots.txt not found for %s; proceeding with allowed default.", cache_key)
+        log.info("Robots.txt not found for %s; proceeding with allowed default.", cache_key)
         parser.parse([])
         cache[cache_key] = parser
         return parser.can_fetch(USER_AGENT, products_url)
@@ -140,8 +143,8 @@ async def fetch_products_for_roaster(
     robots_cache: dict[str, RobotFileParser],
     assets_dir: Path,
     run_id: str,
-    semaphore: Optional[asyncio.Semaphore],
-    logger: logging.Logger,
+    limiter: Optional[PerHostLimiter],
+    log: logging.Logger,
 ) -> list[ProductCandidate]:
     max_products = roaster.max_products or settings.max_products_per_source
     pagination = roaster.pagination or PaginationConfig(max_pages=1)
@@ -150,7 +153,7 @@ async def fetch_products_for_roaster(
     headers = merge_headers(
         {"User-Agent": USER_AGENT},
         roaster.products_headers,
-        logger,
+        log,
         f"{roaster.name} products",
     )
 
@@ -167,11 +170,11 @@ async def fetch_products_for_roaster(
             products_url,
             settings,
             robots_cache,
-            logger,
+            log,
             jitter_multiplier=roaster.jitter_multiplier,
         )
         if not allowed:
-            logger.warning(
+            log.warning(
                 "Robots.txt disallows %s for %s; skipping.",
                 products_url,
                 roaster.name,
@@ -184,18 +187,18 @@ async def fetch_products_for_roaster(
             http_client,
             products_url,
             settings,
-            logger,
+            log,
             headers=headers,
-            semaphore=semaphore,
+            limiter=limiter,
             jitter_multiplier=roaster.jitter_multiplier,
         )
         if response is None:
-            logger.warning("Request failed for %s", products_url)
+            log.warning("Request failed for %s", products_url)
             if stop_on_empty:
                 break
             continue
         if response.status_code >= 400:
-            logger.warning(
+            log.warning(
                 "Non-200 response %s for %s", response.status_code, products_url
             )
             if stop_on_empty:
@@ -210,12 +213,12 @@ async def fetch_products_for_roaster(
             raw_path = save_products_json(
                 assets_dir, run_id, roaster, page_index, json_text
             )
-            logger.info("Saved raw products JSON for %s to %s", roaster.name, raw_path)
+            log.info("Saved raw products JSON for %s to %s", roaster.name, raw_path)
             if settings.save_raw_products_json:
                 report_raw_path = save_products_json(
                     settings.reports_dir, run_id, roaster, page_index, json_text
                 )
-                logger.info(
+                log.info(
                     "Saved raw products JSON copy for %s to %s",
                     roaster.name,
                     report_raw_path,
@@ -223,9 +226,9 @@ async def fetch_products_for_roaster(
             try:
                 data = json.loads(json_text)
             except json.JSONDecodeError as exc:
-                logger.warning("Failed to parse JSON for %s: %s", roaster.name, exc)
+                log.warning("Failed to parse JSON for %s: %s", roaster.name, exc)
                 log_products_json_snippet(
-                    logger,
+                    log,
                     roaster,
                     products_url,
                     json_text,
@@ -236,7 +239,7 @@ async def fetch_products_for_roaster(
                     assets_dir, run_id, roaster, page_index, data
                 )
                 if pretty_path:
-                    logger.info(
+                    log.info(
                         "Saved pretty products JSON for %s to %s",
                         roaster.name,
                         pretty_path,
@@ -246,18 +249,18 @@ async def fetch_products_for_roaster(
                             settings.reports_dir, run_id, roaster, page_index, data
                         )
                         if report_pretty_path:
-                            logger.info(
+                            log.info(
                                 "Saved pretty products JSON copy for %s to %s",
                                 roaster.name,
                                 report_pretty_path,
                             )
                         else:
-                            logger.warning(
+                            log.warning(
                                 "Failed to serialize pretty products JSON copy for %s",
                                 roaster.name,
                             )
                 else:
-                    logger.warning(
+                    log.warning(
                         "Failed to serialize pretty products JSON for %s",
                         roaster.name,
                     )
@@ -278,7 +281,7 @@ async def fetch_products_for_roaster(
                 roaster.base_url,
                 roaster,
                 remaining,
-                logger,
+                log,
             )
         if not page_products and stop_on_empty:
             break
@@ -294,9 +297,9 @@ async def fetch_product_page_text(
     product: ProductCandidate,
     settings: Settings,
     robots_cache: dict[str, RobotFileParser],
-    logger: logging.Logger,
+    log: logging.Logger,
     headers: dict[str, str],
-    semaphore: Optional[asyncio.Semaphore],
+    limiter: Optional[PerHostLimiter],
     jitter_multiplier: float = 1.0,
 ) -> tuple[str, str]:
     product_allowed = await robots_allows(
@@ -304,11 +307,11 @@ async def fetch_product_page_text(
         product.url,
         settings,
         robots_cache,
-        logger,
+        log,
         jitter_multiplier=jitter_multiplier,
     )
     if not product_allowed:
-        logger.warning(
+        log.warning(
             "Robots.txt disallows product page %s; skipping page fetch.",
             product.url,
         )
@@ -318,16 +321,16 @@ async def fetch_product_page_text(
         http_client,
         product.url,
         settings,
-        logger,
+        log,
         headers=headers,
-        semaphore=semaphore,
+        limiter=limiter,
         jitter_multiplier=jitter_multiplier,
     )
     if page_response is None:
-        logger.warning("Request failed for product page %s", product.url)
+        log.warning("Request failed for product page %s", product.url)
         return "", ""
     if page_response.status_code >= 400:
-        logger.warning(
+        log.warning(
             "Non-200 response %s for product page %s",
             page_response.status_code,
             product.url,
@@ -337,7 +340,7 @@ async def fetch_product_page_text(
     page_text = extract_product_jsonld_text(html, settings.page_text_max_chars)
     if not page_text:
         page_text = sanitize_html_to_text(html, settings.page_text_max_chars)
-    logger.info(
+    log.info(
         "Sanitized %s chars of page text for %s", len(page_text), product.url
     )
     http_last_modified = page_response.headers.get("last-modified", "")
@@ -409,9 +412,9 @@ async def fetch_wix_product_sitemap_lastmods(
     roaster: RoasterSource,
     settings: Settings,
     robots_cache: dict[str, RobotFileParser],
-    logger: logging.Logger,
+    log: logging.Logger,
     headers: dict[str, str],
-    semaphore: Optional[asyncio.Semaphore],
+    limiter: Optional[PerHostLimiter],
     jitter_multiplier: float = 1.0,
 ) -> dict[str, str]:
     base = roaster.base_url if roaster.base_url.endswith("/") else f"{roaster.base_url}/"
@@ -437,26 +440,26 @@ async def fetch_wix_product_sitemap_lastmods(
             url,
             settings,
             robots_cache,
-            logger,
+            log,
             jitter_multiplier=jitter_multiplier,
         )
         if not allowed:
-            logger.warning("Robots.txt disallows sitemap %s; skipping.", url)
+            log.warning("Robots.txt disallows sitemap %s; skipping.", url)
             return {}, []
         response = await fetch_text_with_jitter(
             http_client,
             url,
             settings,
-            logger,
+            log,
             headers=headers,
-            semaphore=semaphore,
+            limiter=limiter,
             jitter_multiplier=jitter_multiplier,
         )
         if response is None:
-            logger.warning("Request failed for sitemap %s", url)
+            log.warning("Request failed for sitemap %s", url)
             return {}, []
         if response.status_code >= 400:
-            logger.info("Sitemap not available (%s): %s", response.status_code, url)
+            log.info("Sitemap not available (%s): %s", response.status_code, url)
             return {}, []
         return _parse_sitemap_xml(response.text)
 
@@ -464,6 +467,7 @@ async def fetch_wix_product_sitemap_lastmods(
         queue = [url]
         seen: set[str] = set()
         combined: dict[str, str] = {}
+        cap = max(1, settings.sitemap_max_pages)
         while queue:
             current = queue.pop(0)
             if current in seen:
@@ -474,13 +478,13 @@ async def fetch_wix_product_sitemap_lastmods(
             for child in children:
                 if "store-products-sitemap" in child.lower():
                     queue.append(child)
-            if len(seen) >= 8:
+            if len(seen) >= cap:
                 break
         return combined
 
     lastmods = await _collect(store_products_sitemap)
     if lastmods:
-        logger.info(
+        log.info(
             "Loaded %d Wix sitemap lastmod entries from %s",
             len(lastmods),
             store_products_sitemap,
@@ -489,7 +493,7 @@ async def fetch_wix_product_sitemap_lastmods(
 
     lastmods = await _collect(index_sitemap)
     if lastmods:
-        logger.info(
+        log.info(
             "Loaded %d Wix sitemap lastmod entries from %s",
             len(lastmods),
             index_sitemap,
@@ -500,13 +504,13 @@ async def fetch_wix_product_sitemap_lastmods(
 def merge_headers(
     base_headers: dict[str, str],
     extra_headers: dict[str, str],
-    logger: logging.Logger,
+    log: logging.Logger,
     context: str,
 ) -> dict[str, str]:
     headers = dict(base_headers)
     for key, value in extra_headers.items():
         if key.lower() == "user-agent":
-            logger.warning("Ignoring custom User-Agent for %s", context)
+            log.warning("Ignoring custom User-Agent for %s", context)
             continue
         headers[key] = value
     return headers
