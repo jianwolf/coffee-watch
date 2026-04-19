@@ -1,96 +1,107 @@
 # Coffee Watch
 
-I'm a machine learning engineer who loves making and drinking coffee. I pursue top-quality and interesting coffee choices, but I don't have detailed knowledge about choosing roasters, farms, or beans. This is an agentic LLM system to help me make informed decisions.
+I'm a machine learning engineer who loves making and drinking coffee. I pursue top-quality and interesting coffee choices, but I don't have detailed knowledge about choosing roasters, farms, or beans. This project is an agentic LLM system that monitors specialty roasters and helps me make informed buying decisions.
 
-A low-frequency monitoring agent that checks specialty coffee roasters for new releases and evaluates them with either Gemini + Google Search grounding or a local MLX-served model such as Qwen.
+Coffee Watch is a low-frequency monitoring tool that:
+- crawls roaster catalogs politely
+- tracks first-seen products in SQLite
+- evaluates standout coffees with either Gemini or a local MLX-served model
+- writes per-roaster reports plus cross-roaster digests
 
 ## Highlights
-- Polite crawling with robots.txt checks, jittered pacing, and a fixed User-Agent.
-- Batch evaluation with grounded Gemini outputs or local MLX outputs, with saved markdown reports.
-- Natural-language personalization via one optional user ask such as `decaf`, `mango note`, or `most premium`.
-- Config-driven sources for easy customization.
-- Structured logs for requests, prompts, and outcomes.
-- SQLite seen-products store to track first-seen items by URL/title/description hash.
-- Exponential retry with jitter on transient failures (e.g., 429/5xx).
-- Per-roaster LLM retry up to 10 attempts; hard failures are explicitly recorded.
-- Stateless runs; outputs are written to `reports/` and `logs/`.
+- Polite crawling with `robots.txt` checks, jittered pacing, and a fixed `User-Agent`
+- Shared task prompts across Gemini and local MLX runs for cleaner model/runtime comparison
+- Structured run outputs: markdown reports plus `.status.json` and `.items.json` sidecars
+- Resume mode that retries only missing or failed roaster runs for the current UTC day
+- New-products digest built from the last 7 days of discovered coffees
+- Config validation, structured logging, and a real pytest suite
 
-## Prompting philosophy
-- Roaster and digest task prompts are intentionally shared across Gemini and local/open-source models.
-- This is a deliberate learning goal: keep instructions constant, then compare model quality, runtime behavior, quantization, and serving choices without prompt drift contaminating the comparison.
-- Backend-specific differences should stay in transport/runtime configuration, not in the task wording, unless there is a clear product requirement that outweighs comparability.
+## How It Works
+1. Load roasters from `config/roasters.json` and denylisted domains from `config/denylist.txt`.
+2. Fetch product lists and, when needed, product pages with robots compliance and retry/backoff.
+3. Track products in `logs/seen_products.db` and classify “new” coffees by publish date, HTTP metadata, sitemap metadata, or first-seen timestamp.
+4. Build a shared prompt from product metadata, page text, and an optional user ask.
+5. Generate one report per roaster.
+6. Generate digest reports from today’s roaster outputs.
 
-## How it works
-1. Load roaster sources from `config/roasters.json`.
-2. Fetch product lists and (optionally) product pages with robots.txt compliance.
-3. Track first-seen products in SQLite and classify new items by publish date, page headers, or first-seen timestamp.
-4. Build a batch prompt from product metadata, sanitized page text, and any optional user ask.
-5. Generate a per-roaster report, a full digest, a new-products digest (past 7 days), and a roaster ratings digest.
-6. If any roaster report failed, append a `## Report Generation Failures` section to digest outputs.
+## Code Structure
+- `main.py` — thin entrypoint
+- `coffee_watch/cli.py` — CLI parsing and config/bootstrap error handling
+- `coffee_watch/config.py` — settings model, CLI flags, config precedence, validation
+- `coffee_watch/runner.py` — high-level run orchestration (`full`, `resume`, `digest-only`)
+- `coffee_watch/roaster_pipeline.py` — per-roaster flow and digest generation
+- `coffee_watch/llm_backend.py` — Gemini and MLX backend abstraction
+- `coffee_watch/llm.py` — backward-compatible shim around `llm_backend.py`
+- `coffee_watch/classify.py` — new-product date resolution and digest filtering
+- `coffee_watch/network.py` — HTTP fetching, retries, robots, sitemaps
+- `coffee_watch/http_limits.py` — per-host/global concurrency limiter
+- `coffee_watch/report_status.py` — structured sidecars for resume and failure tracking
+- `coffee_watch/reporting.py` — report, prompt, and sidecar file helpers
+- `coffee_watch/seen_products.py` — SQLite first-seen tracker
+- `tests/` — pytest coverage for config, classification, report parsing, resume logic, URL utilities, and MLX text sanitization
 
-## Code structure
-- `main.py` is the thin entrypoint that calls `coffee_watch/cli.py`.
-- `coffee_watch/runner.py` orchestrates the run lifecycle and report generation.
-- `coffee_watch/network.py` handles HTTP, robots.txt, and jittered fetches.
-- `coffee_watch/parsing.py` parses roaster configs and product lists.
-- `coffee_watch/catalog_parsers.py` handles site-specific catalog parsing (e.g., Wix).
-- `coffee_watch/prompts.py` builds report prompts and language helpers.
-- `coffee_watch/gemini.py` wraps Gemini calls + grounding extraction.
-- `coffee_watch/llm.py` selects the active backend and bridges Gemini vs local MLX.
-- `coffee_watch/seen_products.py` stores first-seen products in SQLite.
+## Installation
 
-## Quickstart
+Basic runtime install:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
 
+Editable install with dev tooling:
+
+```bash
+pip install -e .[dev]
+```
+
+## Basic Usage
+
+Run with defaults:
+
+```bash
 python main.py
 ```
 
-Gemini override:
+Show CLI help:
+
+```bash
+python main.py --help
+```
+
+Run with Gemini explicitly:
+
 ```bash
 export GEMINI_API_KEY=your_key_here
-python main.py --llm-backend gemini --model gemini-3.1-pro-preview --digest-model gemini-3.1-pro-preview
+python main.py --llm-backend gemini --model gemini-3.1-flash-lite-preview --digest-model gemini-3.1-pro-preview
 ```
 
-### CLI usage
-Run with defaults:
-```bash
-python main.py
-```
+Run with a local MLX backend:
 
-Override on the CLI:
 ```bash
-python main.py --language zh --http-concurrency 1 --skip-llm
-python main.py --llm-timeout-s 600
-python main.py --seen-db-path logs/seen_products.db
-python main.py --ask "I want decaf"
-python main.py --digest-only        # regenerate digests from today's roaster reports (UTC)
-python main.py --resume             # retry only missing/failed reports today, then rebuild digests
 python main.py --llm-backend mlx --mlx-runtime vlm --mlx-model mlx-community/Qwen3.5-122B-A10B-4bit
-python main.py --llm-backend mlx --mlx-runtime vlm --mlx-trust-remote-code
-python main.py --stream-llm-output
 ```
 
-### Testing
-Basic sanity check:
-```bash
-python -m py_compile main.py coffee_watch/*.py
-```
+Common modes:
 
-### Config file overrides
-Pass a JSON config file and override selectively with CLI flags. CLI > config > defaults.
 ```bash
+python main.py --ask "I want decaf"
+python main.py --skip-llm
+python main.py --fetch-only
+python main.py --digest-only
+python main.py --resume
 python main.py --config config/settings.json --language en
 ```
 
-Personalization can be passed the same way:
-```bash
-python main.py --config config/settings.json --ask "I want decaf"
-```
+## Configuration
+
+Config precedence is:
+
+`CLI flags > JSON config file > built-in defaults`
 
 Example `config/settings.json`:
+
 ```json
 {
   "language": "zh",
@@ -98,24 +109,33 @@ Example `config/settings.json`:
   "llm_backend": "mlx",
   "model": "mlx-community/Qwen3.5-122B-A10B-4bit",
   "digest_model": "mlx-community/Qwen3.5-122B-A10B-4bit",
-  "gemini_timeout_s": 600.0,
+  "llm_timeout_s": 600.0,
+  "llm_temperature": 1.0,
+  "llm_max_tokens": 100000,
+  "max_llm_attempts": 10,
+  "llm_retry_base_delay_s": 1.0,
+  "llm_retry_max_delay_s": 30.0,
   "mlx_model": "mlx-community/Qwen3.5-122B-A10B-4bit",
   "mlx_runtime": "vlm",
   "mlx_host": "127.0.0.1",
   "mlx_port": 8080,
   "mlx_startup_timeout_s": 900.0,
   "mlx_trust_remote_code": false,
-  "http_concurrency": 1,
   "http_timeout_s": 20.0,
+  "http_max_retries": 2,
   "jitter_min_s": 0.7,
   "jitter_max_s": 2.0,
+  "http_concurrency": 1,
+  "per_host_concurrency": 1,
+  "sitemap_max_pages": 8,
   "max_products_per_source": 200,
   "page_text_max_chars": 0,
   "batch_page_text_max_chars": 0,
   "log_json_max_chars": 0,
   "fetch_only": false,
-  "skip_gemini": false,
+  "skip_llm": false,
   "stream_llm_output": true,
+  "digest_only": false,
   "resume": false,
   "save_prompt": false,
   "save_pretty_products_json": false,
@@ -126,59 +146,77 @@ Example `config/settings.json`:
   "roasters_path": "config/roasters.json",
   "denylist_path": "config/denylist.txt",
   "reports_dir": "reports",
+  "assets_dir": "logs/assets",
   "log_path": "logs/coffee_watch.log",
-  "log_level": "INFO"
+  "log_level": "INFO",
+  "log_format": "text"
 }
 ```
 
-Notes:
-- Plain `python main.py` defaults to the Gemini backend; use `--llm-backend mlx` for a local MLX run.
-- `GEMINI_API_KEY` is only required when `llm_backend` is `gemini`.
-- The Gemini 3.1 Pro preview model code used here is `gemini-3.1-pro-preview`.
-- Prompt text is intentionally shared between Gemini and local MLX runs so report quality differences are easier to attribute to the model/runtime rather than prompt differences. The local backend does not inject extra task instructions beyond transport/runtime settings.
-- Use at most one `--ask` flag or one `user_ask` value in config to steer recommendations toward your taste or constraints.
-- When an ask is present, roaster reports and digests prioritize coffees that match it, call out tradeoffs, and explicitly say when no strong match exists.
-- The current comparison baseline also uses the same decoding temperature on both backends: `1.0` for Gemini and local MLX. This was chosen to stay closer to vendor-recommended starting points and because a lower shared temperature (`0.2`) was observed to reinforce repetitive self-check loops on the small local Qwen model.
-- Descriptions are extracted from product `body_html` (when available).
-- Shopify sources rely on `products.json` and skip per-product page fetches.
-- `gemini_timeout_s` / `llm_timeout_s` controls LLM request timeouts in seconds (0 = no timeout).
-- `model` applies to per-roaster reports; `digest_model` applies to digest generation.
-- `llm_backend=mlx` starts or reuses a local MLX server at a runtime-specific base URL: `http://<mlx_host>:<mlx_port>/v1` for `mlx_runtime=lm`, and `http://<mlx_host>:<mlx_port>` for `mlx_runtime=vlm`.
-- `mlx_runtime=vlm` starts `mlx_vlm.server`; `mlx_runtime=lm` starts `mlx_lm.server`.
-- `mlx_trust_remote_code` passes `--trust-remote-code` to the MLX server when needed by a model.
-- `mlx_model` defaults to `mlx-community/Qwen3.5-122B-A10B-4bit`, and is also used as the default `model` and `digest_model` when `llm_backend=mlx`.
-- `stream_llm_output` mirrors streamed MLX output to the terminal on the local backend. It now defaults to `true`; use `--no-stream-llm-output` to disable it.
-- `new_products_digest` toggles the new-products digest report (default `true`).
-- Per-roaster LLM generation retries up to 10 times before writing a hard-failure note.
-- `resume` retries only missing/failed roaster reports for today (UTC), then regenerates digests from all today reports.
-- The new-products digest includes coffees discovered in the last 7 days (inclusive, UTC run day).
-- `--digest-only` regenerates digests from today's existing roaster reports and does not update `logs/seen_products.db`.
-- Digest outputs append `## Report Generation Failures` with lines like `xxx roaster report generation has failed` when any roaster report is missing/failed.
-- Reports are saved as `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-z-digest.md`, and `YYYYMMDD-z-roaster-digest.md` (UTC date).
-- A new-products digest is saved as `YYYYMMDD-z-new-digest.md` when enabled and matching coffees are detected.
-- Seen products are stored in `logs/seen_products.db`.
+Backwards-compatible config aliases still work for:
+- `gemini_timeout_s` -> `llm_timeout_s`
+- `skip_gemini` -> `skip_llm`
+- `ask` / `user_asks` / `asks` -> `user_ask`
 
-## Configuration
-- `config/roasters.json` controls sources, endpoints, and per-roaster settings (including `platform`).
-- `config/denylist.txt` can block domains on request (one per line).
+## Important Behavior Notes
+- Default backend is `gemini`.
+- `GEMINI_API_KEY` is only needed when `llm_backend=gemini`.
+- When `llm_backend=mlx`, `model` and `digest_model` default to `mlx_model` unless explicitly overridden.
+- `mlx_runtime=lm` uses `http://<host>:<port>/v1`; `mlx_runtime=vlm` uses `http://<host>:<port>`.
+- `stream_llm_output=true` streams local MLX output to the terminal.
+- `skip_llm` skips report and digest generation but still performs crawl/classification work.
+- `fetch_only` skips page-level LLM evaluation and writes fetch-only reports.
+- `digest_only` rebuilds digests from today’s existing reports and does not update `logs/seen_products.db`.
+- `resume` retries only missing or failed roaster runs for the current UTC day, then rebuilds digests.
+- The new-products digest covers the last 7 days ending on the current UTC run day.
+- Scraped product descriptions are wrapped as untrusted text in prompts to reduce prompt-injection risk.
 
-## Outputs (generated locally)
-- `reports/` — Markdown reports + prompt captures
-- `logs/coffee_watch.log` — request/response and LLM traces
-- `logs/seen_products.db` — seen product hashes and first-seen timestamps
+## Outputs
 
-## Support & Opt-out
-For questions or issues, open a GitHub Issue.
+Generated local outputs include:
+- `reports/YYYYMMDD-<roaster-slug>.md` — per-roaster markdown report
+- `reports/YYYYMMDD-z-digest.md` — full digest
+- `reports/YYYYMMDD-z-roaster-digest.md` — roaster scorecard digest
+- `reports/YYYYMMDD-z-new-digest.md` — new-products digest, when enabled and non-empty
+- `reports/YYYYMMDD-<roaster-slug>.status.json` — structured roaster run status
+- `reports/YYYYMMDD-<roaster-slug>.items.json` — structured new-item payload used by digest rebuilds
+- `logs/assets/` — prompt captures and raw/pretty product payloads
+- `logs/coffee_watch.log` — text or JSON log output
+- `logs/seen_products.db` — SQLite seen-product store
 
-This bot runs at low volume and obeys robots.txt. If you are a site owner and prefer not to be monitored, please open a GitHub Issue, and we will add your domain to our denylist immediately.
+## Testing
 
-## Responsible use
+Run tests:
+
+```bash
+pytest -q
+```
+
+Quick syntax check:
+
+```bash
+python -m py_compile main.py coffee_watch/*.py tests/*.py
+```
+
+Tooling config lives in `pyproject.toml` for:
+- `pytest`
+- `ruff`
+- `mypy`
+
+## Prompting Philosophy
+- Roaster and digest prompts are intentionally shared across Gemini and local/open-source backends.
+- This keeps model/runtime comparison cleaner by reducing prompt drift.
+- If backend-specific prompt behavior ever becomes necessary, it should be clearly documented and justified.
+
+## Responsible Use
+
 This is a hobby project intended for low-frequency monitoring and research.
 
 Please use it responsibly:
-- Review and follow each site's terms of service and robots.txt.
-- Do not bypass access controls, paywalls, authentication, or anti-bot measures.
-- You are responsible for how you use this tool; the author is not responsible for misuse.
+- Review and follow each site’s terms of service and `robots.txt`.
+- Do not bypass paywalls, authentication, access controls, or anti-bot protections.
+- If a site owner asks not to be monitored, add the domain to `config/denylist.txt`.
 
 ## License
+
 MIT

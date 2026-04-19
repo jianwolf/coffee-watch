@@ -1,64 +1,63 @@
-# CLAUDE.md
+# Repository Guidelines
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Project Purpose
+- This repo supports real coffee tracking and serves as a public showcase of MLE + backend engineering skills.
+- The codebase is intentionally structured to compare hosted Gemini against local MLX-served models while keeping the task prompt shared.
 
-## Commands
+## Project Structure & Module Organization
+- Source code lives in `coffee_watch/`.
+- Entry point is `main.py`, which calls `coffee_watch/cli.py`.
+- Top-level orchestration lives in `coffee_watch/runner.py`.
+- Per-roaster scraping, classification, report writing, and digest generation live in `coffee_watch/roaster_pipeline.py`.
+- LLM transport selection lives in `coffee_watch/llm_backend.py`; `coffee_watch/llm.py` is a backward-compatible shim.
+- New-product date resolution and digest-only filtering live in `coffee_watch/classify.py`.
+- HTTP, retries, robots.txt handling, and sitemap fetching live in `coffee_watch/network.py`.
+- Per-host concurrency control lives in `coffee_watch/http_limits.py`.
+- Structured resume/digest state lives in `coffee_watch/report_status.py` and `coffee_watch/reporting.py`.
+- Seen-products tracking lives in `coffee_watch/seen_products.py` (SQLite).
+- Config files are under `config/` (for example `config/roasters.json` and `config/denylist.txt`).
+- Generated outputs go to `reports/` and `logs/`.
+- Tests live under `tests/`.
 
-```bash
-# Setup
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+## Build, Test, and Development Commands
+- `python -m venv .venv && source .venv/bin/activate` — create and activate a virtualenv.
+- `pip install -r requirements.txt` — install runtime dependencies.
+- `pip install -e .[dev]` — install the project with test and lint tooling from `pyproject.toml`.
+- `python main.py` — run with default settings.
+- `python main.py --help` — view CLI flags.
+- `python main.py --digest-only` — regenerate digests from today’s existing roaster reports only.
+- `python main.py --resume` — retry only missing/failed roaster reports for today, then rebuild digests.
+- `python main.py --llm-backend mlx --mlx-runtime vlm --mlx-model <model>` — run against a local MLX server target.
+- `pytest -q` — run the test suite.
+- `python -m py_compile main.py coffee_watch/*.py tests/*.py` — quick syntax sanity check.
 
-# Run (defaults to Gemini backend)
-python main.py
+## Coding Style & Naming Conventions
+- Python uses 4-space indentation and type hints where helpful.
+- Keep functions small and single-purpose; prefer descriptive names.
+- Preserve the current module split instead of moving logic back into `runner.py`.
+- File naming for outputs uses UTC date prefixes such as `YYYYMMDD-roaster-slug.md`, `YYYYMMDD-z-digest.md`, `YYYYMMDD-z-roaster-digest.md`, and `YYYYMMDD-z-new-digest.md`.
+- Roaster status and item sidecars use `YYYYMMDD-roaster-slug.status.json` and `YYYYMMDD-roaster-slug.items.json`.
+- Avoid introducing non-ASCII text unless the file already uses it.
 
-# Run with Gemini backend
-export GEMINI_API_KEY=your_key_here
-python main.py --llm-backend gemini --model gemini-3.1-pro-preview --digest-model gemini-3.1-pro-preview
+## Prompt Comparison Policy
+- Keep the main task prompt shared across Gemini and local/open-source models unless the user explicitly asks to diverge.
+- Backend-specific differences should stay in runtime and transport code, not in the task wording.
+- Scraped product descriptions are treated as untrusted text in prompts; preserve that safety boundary when editing prompt builders.
 
-# Common flag combos
-python main.py --digest-only               # regenerate digests from today's reports only
-python main.py --resume                    # retry failed/missing reports then rebuild digests
-python main.py --skip-llm                  # fetch and parse only, no LLM calls
-python main.py --ask "I want decaf"        # personalize recommendations (max one --ask)
-python main.py --config config/settings.json --language en
+## Testing Guidelines
+- Use `pytest -q` as the default verification path.
+- Add tests under `tests/` for behavior changes in config parsing, report parsing, resume logic, classification, or LLM text sanitization.
+- Keep `python -m py_compile ...` as a fast secondary sanity check for simple edits.
 
-# Syntax check (no formal test suite)
-python -m py_compile main.py coffee_watch/*.py
-```
+## Commit & Pull Request Guidelines
+- Commit messages are short, imperative, and capitalized, for example `Refactor runner and harden report flow`.
+- PRs should include a brief summary, rationale, and runtime notes when behavior or flags change.
+- Update `README.md` when user-facing behavior, CLI flags, outputs, or defaults change.
 
-## Architecture
-
-**Entry point:** `main.py` → `coffee_watch/cli.py` → `coffee_watch/runner.py`
-
-**Config precedence:** CLI flags > `config/settings.json` > built-in defaults (defined in `coffee_watch/config.py` as a `Settings` dataclass).
-
-**Run lifecycle** (`runner.py`):
-1. Load roasters from `config/roasters.json`, filter by `config/denylist.txt`
-2. Fetch product lists (JSON for Shopify, HTML for Wix) via `network.py` with robots.txt compliance and jittered pacing
-3. Deduplicate via SHA3-512 hashes in `logs/seen_products.db` (`seen_products.py`)
-4. Build batch prompts per roaster (`prompts.py`) and call LLM (`llm.py`)
-5. Write per-roaster markdown reports, then three digest reports to `reports/`
-
-**LLM backends** (`llm.py` routes to one of):
-- `gemini.py` — Google Gemini API with optional Search grounding
-- `mlx_server.py` — auto-starts a local `mlx_lm.server` or `mlx_vlm.server` subprocess and talks to it over HTTP
-
-**Prompt policy:** Task prompts in `prompts.py` are intentionally identical across backends. This is a deliberate design goal so that report quality differences are attributable to the model/runtime rather than prompt wording. Backend-specific logic belongs in transport/runtime code, not prompt text.
-
-**Output files** (all UTC date-stamped):
-- `reports/YYYYMMDD-<roaster-slug>.md` — per-roaster evaluation
-- `reports/YYYYMMDD-z-digest.md` — full digest
-- `reports/YYYYMMDD-z-roaster-digest.md` — roaster ratings digest
-- `reports/YYYYMMDD-z-new-digest.md` — new products (last 7 days), when enabled
-- `logs/coffee_watch.log` — structured JSON logs
-- `logs/seen_products.db` — SQLite seen-product hashes
-
-## Key Design Decisions
-
-- **Concurrency:** default `http_concurrency=1` for polite crawling; jitter `0.7–2.0s` between requests.
-- **Retries:** per-roaster LLM calls retry up to 10 times; HTTP uses exponential backoff on 429/5xx.
-- **Temperature:** `1.0` on both backends — a lower shared value (`0.2`) was found to cause repetitive self-check loops on small local Qwen models.
-- **MLX backend URL:** `lm` runtime uses `/v1` base path; `vlm` runtime uses root `/`.
-- **`--digest-only`** does not update `seen_products.db`; `--resume` does.
-- Failures are surfaced as a `## Report Generation Failures` section appended to digest outputs rather than hard-crashing.
+## Security & Configuration Tips
+- Secrets come from environment variables such as `GEMINI_API_KEY`; never commit secrets.
+- The crawler respects `robots.txt` and uses the fixed project `User-Agent`; do not weaken that behavior.
+- Use `config/denylist.txt` to opt out specific domains.
+- Seen-products tracking uses `logs/seen_products.db`.
+- Per-roaster pacing can be tuned with `jitter_multiplier` in `config/roasters.json`.
+- Global and per-host request concurrency are controlled separately via `http_concurrency` and `per_host_concurrency`.
