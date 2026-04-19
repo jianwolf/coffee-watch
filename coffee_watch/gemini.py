@@ -7,6 +7,7 @@ import logging
 from typing import Any, Optional
 
 from google import genai
+from google.genai import errors
 from google.genai import types
 
 
@@ -242,6 +243,16 @@ def log_grounding_queries(
         logger.info("Gemini grounding queries for %s: none", request_name)
 
 
+def is_retryable_gemini_api_error(exc: Exception) -> bool:
+    if not isinstance(exc, errors.APIError):
+        return False
+    status_code = getattr(exc, "code", None)
+    if isinstance(status_code, int) and status_code in {429, 500, 502, 503, 504}:
+        return True
+    message = str(exc).upper()
+    return "UNAVAILABLE" in message or "RESOURCE_EXHAUSTED" in message
+
+
 async def evaluate_roaster_markdown(
     client: genai.Client,
     model: str,
@@ -296,7 +307,14 @@ async def evaluate_roaster_markdown(
         )
         return None, None
     except Exception as exc:
-        logger.exception("Gemini request failed for %s: %s", roaster_name, exc)
+        if is_retryable_gemini_api_error(exc):
+            logger.warning(
+                "Gemini request encountered retryable error for %s: %s",
+                roaster_name,
+                exc,
+            )
+        else:
+            logger.exception("Gemini request failed for %s: %s", roaster_name, exc)
         return None, None
 
     text = (getattr(response, "text", None) or "").strip()
@@ -368,7 +386,10 @@ async def generate_digest_markdown(
         logger.warning("Gemini digest request timed out after %.1fs", timeout_s)
         return None
     except Exception as exc:
-        logger.exception("Gemini digest request failed: %s", exc)
+        if is_retryable_gemini_api_error(exc):
+            logger.warning("Gemini digest request encountered retryable error: %s", exc)
+        else:
+            logger.exception("Gemini digest request failed: %s", exc)
         return None
 
     text = extract_response_text(response).strip()

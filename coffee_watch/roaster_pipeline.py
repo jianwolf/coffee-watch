@@ -465,6 +465,11 @@ async def _process_roaster_inner(
         if attempt < max_attempts and base_delay > 0:
             delay_cap = min(max_delay, base_delay * (2 ** (attempt - 1)))
             sleep_for = random.uniform(base_delay, delay_cap) if delay_cap > base_delay else base_delay
+            log.warning(
+                "Retrying LLM for %s in %.1fs.",
+                roaster.name,
+                sleep_for,
+            )
             await asyncio.sleep(sleep_for)
 
     report_path: Optional[Path] = None
