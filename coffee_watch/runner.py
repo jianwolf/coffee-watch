@@ -198,13 +198,15 @@ async def _run_full(
 ) -> int:
     settings = ctx.settings
     log = ctx.logger
-    report_paths, _failed = await _run_roasters(ctx, roasters)
+    report_paths, failed_roasters = await _run_roasters(ctx, roasters)
     reports: list[tuple[str, str]] = []
-    failed_roasters: list[str] = []
     if report_paths:
         reports = load_reports_for_digest(report_paths, log)
-        failed_roasters = extract_failed_roasters_from_reports(
-            reports, settings.reports_dir, ctx.run_id
+        failed_roasters = merge_failed_roaster_names(
+            failed_roasters,
+            extract_failed_roasters_from_reports(
+                reports, settings.reports_dir, ctx.run_id
+            ),
         )
     if settings.save_report:
         await _finalize_digests(ctx, reports, failed_roasters)

@@ -116,6 +116,8 @@ class MLXServerManager:
                 "--port",
                 str(self.port),
             ]
+            if self.trust_remote_code:
+                cmd.append("--trust-remote-code")
         elif self.runtime == "lm":
             cmd = [
                 sys.executable,
@@ -128,11 +130,15 @@ class MLXServerManager:
                 "--port",
                 str(self.port),
             ]
+            if self.trust_remote_code:
+                cmd.append("--trust-remote-code")
         else:
             cmd = [
                 sys.executable,
                 "-m",
                 "mlx_vlm.server",
+                "--model",
+                self.model,
                 "--host",
                 self.host,
                 "--port",
@@ -215,7 +221,7 @@ class MLXServerManager:
         manual_cmd = (
             f"mlx_lm.server --model {self.model}"
             if self.runtime == "lm"
-            else "mlx_vlm.server"
+            else f"mlx_vlm.server --model {self.model}"
         )
         raise MLXServerError(
             f"MLX server did not become ready within {self.startup_timeout}s. "
