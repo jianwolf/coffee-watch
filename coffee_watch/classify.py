@@ -1,7 +1,7 @@
 """New-product classification and date resolution.
 
 Extracted from ``runner.py`` so the classification logic is testable in
-isolation (no asyncio, no httpx, no LLM).
+isolation without network clients or scrape orchestration.
 """
 
 from __future__ import annotations

@@ -14,13 +14,15 @@ def normalize_base_url(url: str) -> str:
     if not parsed.scheme:
         url = f"https://{url.lstrip('/')}"
         parsed = urlsplit(url)
-    normalized = urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+    normalized = urlunsplit(
+        (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", "")
+    )
     return normalized or url
 
 
 def canonicalize_url(url: str) -> str:
     parts = urlsplit(url)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, "", ""))
 
 
 def build_url_with_params(base_url: str, path: str, params: dict[str, str]) -> str:

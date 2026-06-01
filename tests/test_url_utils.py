@@ -17,11 +17,19 @@ def test_normalize_base_url_strips_trailing_slash():
     assert normalize_base_url("https://example.com/") == "https://example.com"
 
 
+def test_normalize_base_url_lowercases_scheme_and_host():
+    assert normalize_base_url("HTTP://EXAMPLE.COM/shop/") == "http://example.com/shop"
+
+
 def test_canonicalize_url_drops_query_and_fragment():
     assert (
         canonicalize_url("https://example.com/p?x=1#frag")
         == "https://example.com/p"
     )
+
+
+def test_canonicalize_url_lowercases_scheme_and_host():
+    assert canonicalize_url("HTTPS://EXAMPLE.COM/P") == "https://example.com/P"
 
 
 def test_build_url_with_params_appends_to_existing_query():
@@ -56,6 +64,11 @@ def test_matches_patterns_regex_prefix():
         ("re:/p/\\d+",),
         (),
     )
+
+
+def test_matches_patterns_invalid_regex_is_ignored():
+    assert not matches_patterns("https://x.com/p/123", ("re:[",), ())
+    assert matches_patterns("https://x.com/p/123", (), ("re:[",)) is True
 
 
 def test_safe_slug_lowercases_and_hyphenates():

@@ -70,6 +70,7 @@ def new_products_catalog_path(reports_dir: Path, run_id: str) -> Path:
 
 
 def save_json(path: Path, payload: Any) -> Path:
+    _ensure_directory(path.parent)
     path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
         encoding="utf-8",
@@ -136,4 +137,6 @@ def load_roaster_catalogs(
             continue
         if isinstance(payload, dict):
             catalogs.append(payload)
+        else:
+            logger.warning("Skipping non-object roaster catalog %s", path)
     return catalogs

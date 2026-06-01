@@ -36,6 +36,17 @@ def test_config_alias_for_output_dir():
     assert str(settings.reports_dir) == "out"
 
 
+def test_canonical_config_key_overrides_alias():
+    settings = build_settings(_args(), {"reports_dir": "reports-a", "output_dir": "reports-b"})
+
+    assert str(settings.reports_dir) == "reports-a"
+
+
+def test_unknown_config_key_raises():
+    with pytest.raises(ConfigError, match="typo"):
+        build_settings(_args(), {"typo": True})
+
+
 def test_string_bool_config_values():
     settings = build_settings(
         _args(),
@@ -45,9 +56,35 @@ def test_string_bool_config_values():
     assert settings.resume is True
 
 
+def test_invalid_string_bool_config_raises():
+    with pytest.raises(ConfigError, match="fetch_product_pages"):
+        build_settings(_args(), {"fetch_product_pages": "maybe"})
+
+
 def test_invalid_log_format_raises():
     with pytest.raises(ConfigError):
         build_settings(_args(log_format="xml"), {})
+
+
+def test_invalid_log_level_raises():
+    with pytest.raises(ConfigError, match="log_level"):
+        build_settings(_args(log_level="loud"), {})
+
+
+def test_log_level_is_normalized():
+    settings = build_settings(_args(log_level=" warning "), {})
+
+    assert settings.log_level == "WARNING"
+
+
+def test_invalid_numeric_config_reports_field_name():
+    with pytest.raises(ConfigError, match="http_timeout_s"):
+        build_settings(_args(), {"http_timeout_s": "fast"})
+
+
+def test_invalid_integer_config_reports_field_name():
+    with pytest.raises(ConfigError, match="http_concurrency"):
+        build_settings(_args(), {"http_concurrency": "many"})
 
 
 def test_jitter_range_validation():

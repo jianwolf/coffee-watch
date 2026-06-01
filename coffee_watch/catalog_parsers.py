@@ -14,7 +14,7 @@ CatalogParser = Callable[
     [str, str, RoasterSource, int, logging.Logger], list[ProductCandidate]
 ]
 
-_PRICE_RE = re.compile(r"(?:\\$|&#36;|&dollar;)\\s*\\d+(?:\\.\\d{2})?")
+_PRICE_RE = re.compile(r"(?:\$|\\\$|&#36;|&dollar;)\s*\d+(?:\.\d{2})?")
 _BADGE_RE = re.compile(
     r"\b(New Harvest|New|Harvest|Limited|Sold Out|Out of Stock)\b", re.IGNORECASE
 )

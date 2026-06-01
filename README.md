@@ -80,6 +80,13 @@ Run with defaults:
 python scrape_coffee.py
 ```
 
+If installed in editable mode, the equivalent console scripts are also available:
+
+```bash
+coffee-watch
+scrape-coffee
+```
+
 Show CLI help:
 
 ```bash
@@ -111,6 +118,8 @@ Config precedence is:
 ```text
 CLI flags > JSON config file > built-in defaults
 ```
+
+Config files are validated before a run starts. Unknown keys, invalid numeric values, invalid boolean strings, and unsupported log levels fail fast with a configuration error.
 
 Example `config/settings.json`:
 

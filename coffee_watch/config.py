@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 LOG_FORMATS = frozenset({"text", "json"})
+LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"})
 
 
 class ConfigError(ValueError):
@@ -44,6 +45,10 @@ class Settings:
         if self.log_format not in LOG_FORMATS:
             issues.append(
                 f"log_format must be one of {sorted(LOG_FORMATS)}; got {self.log_format!r}"
+            )
+        if self.log_level.upper() not in LOG_LEVELS:
+            issues.append(
+                f"log_level must be one of {sorted(LOG_LEVELS)}; got {self.log_level!r}"
             )
         if self.http_timeout_s <= 0:
             issues.append("http_timeout_s must be > 0")
@@ -211,7 +216,16 @@ CONFIG_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _as_bool(value: Any) -> bool:
+def _validate_config_keys(config: dict[str, Any]) -> None:
+    allowed = set(Settings.__dataclass_fields__) | {
+        alias for aliases in CONFIG_ALIASES.values() for alias in aliases
+    }
+    unknown = sorted(key for key in config if key not in allowed)
+    if unknown:
+        raise ConfigError(f"Unknown config key(s): {', '.join(unknown)}")
+
+
+def _as_bool(field_name: str, value: Any) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -220,10 +234,29 @@ def _as_bool(value: Any) -> bool:
             return True
         if lowered in {"0", "false", "no", "off"}:
             return False
+        raise ConfigError(
+            f"{field_name} must be a boolean or one of true/false/yes/no/on/off/1/0; "
+            f"got {value!r}"
+        )
     return bool(value)
 
 
+def _as_int(field_name: str, value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{field_name} must be an integer; got {value!r}") from exc
+
+
+def _as_float(field_name: str, value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{field_name} must be a number; got {value!r}") from exc
+
+
 def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings:
+    _validate_config_keys(config)
     defaults = Settings.defaults()
 
     def get_config_value(field_name: str) -> Any:
@@ -247,29 +280,44 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         value = pick_value(field_name)
         return value if isinstance(value, Path) else Path(str(value))
 
+    log_level = str(pick_value("log_level")).strip().upper() or defaults.log_level
     log_format = str(pick_value("log_format")).strip().lower() or defaults.log_format
 
     return Settings(
-        http_timeout_s=float(pick_value("http_timeout_s")),
-        http_max_retries=int(pick_value("http_max_retries")),
-        jitter_min_s=float(pick_value("jitter_min_s")),
-        jitter_max_s=float(pick_value("jitter_max_s")),
-        http_concurrency=int(pick_value("http_concurrency")),
-        per_host_concurrency=int(pick_value("per_host_concurrency")),
-        sitemap_max_pages=int(pick_value("sitemap_max_pages")),
-        max_products_per_source=int(pick_value("max_products_per_source")),
-        page_text_max_chars=int(pick_value("page_text_max_chars")),
-        log_json_max_chars=int(pick_value("log_json_max_chars")),
-        fetch_product_pages=_as_bool(pick_value("fetch_product_pages")),
-        resume=_as_bool(pick_value("resume")),
-        save_pretty_products_json=_as_bool(pick_value("save_pretty_products_json")),
-        save_raw_products_json=_as_bool(pick_value("save_raw_products_json")),
+        http_timeout_s=_as_float("http_timeout_s", pick_value("http_timeout_s")),
+        http_max_retries=_as_int("http_max_retries", pick_value("http_max_retries")),
+        jitter_min_s=_as_float("jitter_min_s", pick_value("jitter_min_s")),
+        jitter_max_s=_as_float("jitter_max_s", pick_value("jitter_max_s")),
+        http_concurrency=_as_int("http_concurrency", pick_value("http_concurrency")),
+        per_host_concurrency=_as_int(
+            "per_host_concurrency", pick_value("per_host_concurrency")
+        ),
+        sitemap_max_pages=_as_int("sitemap_max_pages", pick_value("sitemap_max_pages")),
+        max_products_per_source=_as_int(
+            "max_products_per_source", pick_value("max_products_per_source")
+        ),
+        page_text_max_chars=_as_int(
+            "page_text_max_chars", pick_value("page_text_max_chars")
+        ),
+        log_json_max_chars=_as_int(
+            "log_json_max_chars", pick_value("log_json_max_chars")
+        ),
+        fetch_product_pages=_as_bool(
+            "fetch_product_pages", pick_value("fetch_product_pages")
+        ),
+        resume=_as_bool("resume", pick_value("resume")),
+        save_pretty_products_json=_as_bool(
+            "save_pretty_products_json", pick_value("save_pretty_products_json")
+        ),
+        save_raw_products_json=_as_bool(
+            "save_raw_products_json", pick_value("save_raw_products_json")
+        ),
         seen_db_path=pick_path("seen_db_path"),
         roasters_path=pick_path("roasters_path"),
         denylist_path=pick_path("denylist_path"),
         reports_dir=pick_path("reports_dir"),
         assets_dir=pick_path("assets_dir"),
         log_path=pick_path("log_path"),
-        log_level=str(pick_value("log_level")),
+        log_level=log_level,
         log_format=log_format,
     )

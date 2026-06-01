@@ -36,3 +36,27 @@ def test_catalog_product_extracts_labeled_fields():
     assert item["origin"] == "Ethiopia"
     assert item["process"] == "Washed"
     assert item["tasting_notes"] == ["jasmine", "peach", "black tea"]
+
+
+def test_catalog_product_splits_slash_separated_tasting_notes():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Ethiopia Test",
+        url="https://example.com/products/ethiopia-test",
+        source="R",
+        variants=(VariantInfo("12oz", "22.00", 340, True),),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com"),
+        raw_product_text="Tasting notes: jasmine/peach / black tea.",
+        first_seen_at="2026-04-18T00:00:00+00:00",
+        is_new=True,
+        date_source="seen_at",
+        update_date=date(2026, 4, 18),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["tasting_notes"] == ["jasmine", "peach", "black tea"]

@@ -53,7 +53,13 @@ def to_str_tuple(
     if isinstance(value, list):
         if not value:
             return default if fallback_on_empty else ()
-        items = [str(item) for item in value if str(item)]
+        items = []
+        for item in value:
+            if item is None:
+                continue
+            cleaned = str(item).strip()
+            if cleaned:
+                items.append(cleaned)
         if items:
             return tuple(items)
         return default if fallback_on_empty else ()
@@ -64,12 +70,36 @@ def parse_items_path(value: Any) -> Optional[tuple[str, ...]]:
     if value is None:
         return None
     if isinstance(value, list):
-        parts = [str(item) for item in value if str(item)]
+        parts = [
+            str(item).strip()
+            for item in value
+            if item is not None and str(item).strip()
+        ]
         return tuple(parts) if parts else None
     if isinstance(value, str):
         parts = [part for part in value.replace("/", ".").split(".") if part]
         return tuple(parts) if parts else None
     return None
+
+
+def bool_from_config(value: Any, default: bool = False) -> bool:
+    """Parse loose booleans from roaster/product payloads.
+
+    Unlike top-level settings validation, roaster and scraped product data should
+    be tolerant: unknown strings fall back to the caller's default.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+        return default
+    return bool(value)
 
 
 def normalize_tokens(values: tuple[str, ...]) -> set[str]:
@@ -108,7 +138,8 @@ def product_matches_filters(
     if exclude_types and product_type in exclude_types:
         return False
     for keyword in exclude_title_keywords:
-        if keyword and keyword in title:
+        normalized_keyword = keyword.strip().lower()
+        if normalized_keyword and normalized_keyword in title:
             return False
     return True
 
@@ -135,7 +166,7 @@ def parse_pagination(value: Any) -> Optional[PaginationConfig]:
         max_pages=int(value.get("max_pages", 1)),
         page_size_param=value.get("page_size_param"),
         page_size=int(value["page_size"]) if value.get("page_size") is not None else None,
-        stop_on_empty=bool(value.get("stop_on_empty", True)),
+        stop_on_empty=bool_from_config(value.get("stop_on_empty"), default=True),
     )
 
 
@@ -174,7 +205,7 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
             base_url=base_url,
             platform=str(entry.get("platform", "unknown")).strip().lower() or "unknown",
             products_path=str(entry.get("products_path", "/products.json")),
-            enabled=bool(entry.get("enabled", True)),
+            enabled=bool_from_config(entry.get("enabled"), default=True),
             products_type=products_type,
             products_parser=(
                 str(entry.get("products_parser")).strip()
@@ -282,8 +313,12 @@ def parse_variants(value: Any) -> tuple[VariantInfo, ...]:
         title = str(variant.get("title") or "").strip()
         price = str(variant.get("price") or "").strip()
         grams_value = variant.get("grams")
-        grams = int(grams_value) if isinstance(grams_value, (int, float)) else 0
-        available = bool(variant.get("available", False))
+        try:
+            grams = int(grams_value) if grams_value not in (None, "") else 0
+        except (TypeError, ValueError):
+            grams = 0
+        available_value = variant.get("available", False)
+        available = bool_from_config(available_value)
         variants.append(
             VariantInfo(
                 title=title,

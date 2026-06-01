@@ -40,7 +40,7 @@ def _split_notes(value: str) -> list[str]:
     cleaned = _clean(value)
     if not cleaned:
         return []
-    parts = re.split(r",|;|\|| / ", cleaned)
+    parts = re.split(r"[,;|]|\s*/\s*", cleaned)
     return [part.strip(" .") for part in parts if part.strip(" .")]
 
 
