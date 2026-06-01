@@ -64,6 +64,18 @@ def test_parse_variants_accepts_string_grams_and_available_values():
     assert variants[1].available is False
 
 
+def test_parse_variants_prefers_title_weight_when_shopify_grams_is_wrong():
+    variants = parse_variants(
+        [
+            {"title": "8oz", "price": "28.00", "grams": 227, "available": True},
+            {"title": "2lb", "price": "90.00", "grams": 907, "available": True},
+            {"title": "5lb", "price": "195.00", "grams": 227, "available": True},
+        ]
+    )
+
+    assert [variant.grams for variant in variants] == [227, 907, 2268]
+
+
 def test_load_roasters_treats_string_false_enabled_as_disabled(tmp_path):
     path = tmp_path / "roasters.json"
     path.write_text(

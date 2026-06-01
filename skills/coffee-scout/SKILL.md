@@ -20,6 +20,7 @@ The consumer context is concrete: the user will often end up buying from one roa
 - If the scraper fails with DNS, host resolution, connection, or sandbox/network errors, request network approval and rerun `python scrape_coffee.py` before analyzing.
 - Do not treat catalogs produced by a network-blocked run as fresh evidence. If the fresh combined catalog has zero products, all-empty roasters, or failures that look environment-wide, rerun with network access.
 - After scraping, prefer the fresh `reports/YYYYMMDD-new-products.json` for "what should I buy now?" style questions. Use `reports/YYYYMMDD-catalog.json` when the user asks for the full lineup.
+- If the user asks about scrape time or web-scraping cost, capture the scraper wall time from command output or `logs/coffee_watch.log` and include a concise timing/status note in the reports, especially the final synthesis.
 - If scraping fails, inspect the error/logs briefly, then fall back to the latest readable catalog only if it is useful and clearly label it as stale.
 - For detailed digest prompts and report structure, read `references/digest-prompts.md` as needed. Use it as prompt and format guidance only; do not call model APIs from repo code.
 
@@ -41,12 +42,14 @@ If subagents are available, the first three digest passes may be delegated indep
 ## Workflow
 
 1. Run the scraper or select the requested catalog.
-2. Load the catalog JSON and inspect `summary`, `products`, and each product's `errors`.
+2. Load the catalog JSON and inspect `summary`, `products`, and each product's `errors`. Do not assume a top-level `new_products` list exists; if needed, derive new products from `products` where `is_new` is true.
 3. Prefer products with source URLs, clear availability, credible roast/process/origin details, and recent `is_new` or `update_date` signals.
 4. Exclude products with `availability != "available"` or `storefront_status == "storefront_unavailable"` from recommendations; mention them only as scrape caveats when useful.
-5. Use preferences stated in the current conversation only. Do not assume persistent preferences unless the user states them.
-6. Preserve uncertainty: mark missing process, unclear availability, suspicious price, empty raw text, or scrape errors.
-7. Cite product URLs for every recommendation.
+5. Treat `is_new` but unavailable products as new scrape evidence, not buying candidates. In the new-products digest, count or mention excluded new products separately when that distinction matters.
+6. Use `price_label` when available so reports show the purchasable size and price together, such as `250 g = $34.25`, not just a bare dollar amount. Prefer `price_source=visible_variant` when explaining confidence.
+7. Use preferences stated in the current conversation only. Do not assume persistent preferences unless the user states them.
+8. Preserve uncertainty: mark missing process, unclear availability, suspicious price, empty raw text, or scrape errors.
+9. Cite product URLs for every recommendation.
 
 ## Output
 
@@ -84,6 +87,9 @@ Before finalizing, self-check the fourth report:
 - Does the report avoid choosing the final roaster or exact bags for the user?
 - Does it provide enough information for follow-up questions about taste, budget, processing, origin, or risk?
 - Does it preserve uncertainty and cite product URLs?
+- If the user asked about scrape time, does it include a compact timing/status note rather than burying that information?
+- Does it show size-aware prices via `price_label` when available?
+- Does the new-products logic distinguish available new products from `is_new` products that are currently storefront-unavailable?
 
 Also scan the first three digest artifacts before finalizing. If they overuse "two bags" as a structural conclusion, rewrite that language as broader ranked menus, shortlist maps, or preference routes.
 

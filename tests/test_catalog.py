@@ -249,3 +249,35 @@ def test_catalog_product_skips_unavailable_visible_small_format():
     assert item["price_variant"] == "250 g"
     assert item["price_label"] == "250 g = $88.00"
     assert item["price_source"] == "visible_variant"
+
+
+def test_catalog_product_prefers_whole_bean_for_same_weight():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Whole Bean Coffee",
+        url="https://example.com/products/whole-bean",
+        source="R",
+        variants=(
+            VariantInfo("250g / Ground for Aeropress", "24.00", 250, True),
+            VariantInfo("250g / Drip", "24.00", 250, True),
+            VariantInfo("250g / Whole Bean", "24.00", 250, True),
+            VariantInfo("1kg / Whole Bean", "80.00", 1000, True),
+        ),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="shopify"),
+        raw_product_text="Tasting notes: apple, honey.",
+        first_seen_at="2026-04-18T00:00:00+00:00",
+        is_new=False,
+        date_source="shopify_published_at",
+        update_date=date(2026, 4, 18),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["price"] == "24.00"
+    assert item["price_variant"] == "250g / Whole Bean"
+    assert item["price_label"] == "250g / Whole Bean = $24.00"
+    assert item["price_source"] == "variant"

@@ -129,7 +129,7 @@ Example `config/settings.json`:
   "http_max_retries": 2,
   "jitter_min_s": 0.7,
   "jitter_max_s": 2.0,
-  "http_concurrency": 1,
+  "http_concurrency": 50,
   "per_host_concurrency": 1,
   "sitemap_max_pages": 8,
   "max_products_per_source": 200,
@@ -206,6 +206,8 @@ This is a hobby project intended for low-frequency monitoring and research.
 Please use it responsibly:
 
 - Review and follow each site's terms of service and `robots.txt`.
+- Keep `per_host_concurrency` conservative by default; `http_concurrency` only
+  removes unnecessary serialization across different hosts.
 - Do not bypass paywalls, authentication, access controls, or anti-bot protections.
 - If a site owner asks not to be monitored, add the domain to `config/denylist.txt`.
 

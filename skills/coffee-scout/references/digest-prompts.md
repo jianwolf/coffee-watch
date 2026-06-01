@@ -27,6 +27,7 @@ User ask:
 Use this ask to steer the recommendations.
 Prefer coffees that satisfy it when the provided evidence supports it.
 If no coffee is a strong match, say so explicitly and explain the closest fit.
+If the user asks about scrape timing or web-fetch cost, include a concise timing/status note using observed runtime and HTTP status evidence.
 ```
 
 ## Per-Roaster Batch Prompt
@@ -52,7 +53,11 @@ Each product was formatted as:
   name: {name}
   url: {url}
   list price: {list_price}
+  display price: {price_label}
+  price source: {price_source}
   badge: {list_badge}
+  availability: {availability}
+  storefront status: {storefront_status}
   variants:
   - {variant_line}
   description:
@@ -128,7 +133,11 @@ Each new coffee was formatted as:
   name: {name}
   url: {url}
   list price: {list_price}
+  display price: {price_label}
+  price source: {price_source}
   badge: {badge}
+  availability: {availability}
+  storefront status: {storefront_status}
   variants:
   - {variant_line}
   description:
@@ -215,6 +224,8 @@ Provide focused scouting information first: a ranked roaster shortlist, short ro
 Two-bag combinations are allowed as examples only after the focused menu is visible.
 Do not make every roaster section a forced two-bag bundle, and do not cap a roaster at two coffees just because the eventual purchase may be two bags. The normal cap is instead an anti-overload cap of about five coffees per selected roaster.
 Do not use "final choice", "primary purchase path", "my conclusion", or similar language that implies Codex has already selected the roaster or exact checkout.
+If scrape runtime or web-fetch cost matters to the user, include a short section with the observed elapsed time, status distribution, and any access-control caveats.
+Use size-aware display prices when available, for example `250 g = $34.25`, so the reader can tell what can actually be bought.
 End by inviting follow-up preferences or questions. The final line must be exactly: 你这次有什么品味偏好或问题？
 Do not invent facts; cite product URLs and mark scrape uncertainty.
 ```

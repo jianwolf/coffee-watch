@@ -82,7 +82,7 @@ class Settings:
             http_max_retries=2,
             jitter_min_s=0.7,
             jitter_max_s=2.0,
-            http_concurrency=1,
+            http_concurrency=50,
             per_host_concurrency=1,
             sitemap_max_pages=8,
             max_products_per_source=200,

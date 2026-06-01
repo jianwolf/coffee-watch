@@ -20,6 +20,8 @@ def test_defaults_pass_validation():
     settings = build_settings(_args(), {})
     assert settings.fetch_product_pages is True
     assert settings.resume is False
+    assert settings.http_concurrency == 50
+    assert settings.per_host_concurrency == 1
     assert settings.log_format == "text"
 
 

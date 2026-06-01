@@ -67,10 +67,37 @@ def _normalize_variant_title(title: str) -> str:
     return re.sub(r"\s+", "", title.strip().lower())
 
 
-def _variant_sort_key(variant: VariantInfo) -> tuple[int, int, str]:
+def _variant_sort_key(variant: VariantInfo) -> tuple[int, int, int, str]:
+    grind_rank = _variant_grind_rank(variant.title)
     if variant.grams > 0:
-        return (0, variant.grams, variant.title)
-    return (1, 0, variant.title)
+        return (0, variant.grams, grind_rank, variant.title)
+    return (1, 0, grind_rank, variant.title)
+
+
+def _variant_grind_rank(title: str) -> int:
+    normalized = title.lower()
+    if "whole bean" in normalized or "wholebean" in normalized:
+        return 0
+    grind_terms = (
+        "ground",
+        "grind",
+        "drip",
+        "espresso",
+        "aeropress",
+        "aero press",
+        "pour over",
+        "pourover",
+        "french press",
+        "stove top",
+        "stovetop",
+        "mocha pot",
+        "moka pot",
+        "brewed coffee",
+        "cold brew",
+    )
+    if any(term in normalized for term in grind_terms):
+        return 2
+    return 1
 
 
 def _preferred_price_variant(

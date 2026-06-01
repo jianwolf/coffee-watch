@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urljoin
@@ -18,6 +19,12 @@ from .models import (
 )
 from .text_utils import LinkParser, guess_name_from_url
 from .url_utils import canonicalize_url, matches_patterns, normalize_base_url
+
+
+VARIANT_WEIGHT_RE = re.compile(
+    r"(?<![$A-Za-z0-9])(\d+(?:\.\d+)?)\s*(kg|g|gram|grams|oz|lb|lbs|pound|pounds)\b",
+    re.IGNORECASE,
+)
 
 
 def load_denylist(path: Path) -> set[str]:
@@ -307,6 +314,38 @@ def product_id_from_url(url: str) -> str:
     return digest
 
 
+def _grams_from_variant_label(value: str) -> int:
+    match = VARIANT_WEIGHT_RE.search(value)
+    if not match:
+        return 0
+    amount = float(match.group(1))
+    unit = match.group(2).lower()
+    if unit == "kg":
+        grams = amount * 1000
+    elif unit in {"lb", "lbs", "pound", "pounds"}:
+        grams = amount * 453.59237
+    elif unit == "oz":
+        grams = amount * 28.349523125
+    else:
+        grams = amount
+    return int(round(grams))
+
+
+def _grams_from_variant(variant: dict[str, Any]) -> int:
+    for field in ("title", "option1", "option2", "option3"):
+        label = str(variant.get(field) or "").strip()
+        if not label:
+            continue
+        grams = _grams_from_variant_label(label)
+        if grams > 0:
+            return grams
+    grams_value = variant.get("grams")
+    try:
+        return int(grams_value) if grams_value not in (None, "") else 0
+    except (TypeError, ValueError):
+        return 0
+
+
 def parse_variants(value: Any) -> tuple[VariantInfo, ...]:
     variants_raw = value if isinstance(value, list) else []
     variants: list[VariantInfo] = []
@@ -315,11 +354,7 @@ def parse_variants(value: Any) -> tuple[VariantInfo, ...]:
             continue
         title = str(variant.get("title") or "").strip()
         price = str(variant.get("price") or "").strip()
-        grams_value = variant.get("grams")
-        try:
-            grams = int(grams_value) if grams_value not in (None, "") else 0
-        except (TypeError, ValueError):
-            grams = 0
+        grams = _grams_from_variant(variant)
         available_value = variant.get("available", False)
         available = bool_from_config(available_value)
         variants.append(

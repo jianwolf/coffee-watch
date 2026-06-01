@@ -41,6 +41,7 @@ from .report_status import (
 )
 from .reporting import make_roaster_catalog_path, save_json
 from .text_utils import (
+    extract_product_jsonld_text,
     extract_size_button_labels,
     sanitize_html_to_text,
     trim_text_at_phrases,
@@ -183,19 +184,24 @@ async def _fetch_missing_product_pages(
     return http_last_modified_by_url, errors_by_url, page_fetch_count
 
 
-async def _fetch_visible_variant_titles(
+async def _fetch_storefront_product_pages(
     ctx: RunContext,
     roaster: RoasterSource,
     products: list[ProductCandidate],
-) -> tuple[dict[str, tuple[str, ...]], dict[str, str], dict[str, list[str]], int]:
+) -> tuple[
+    dict[str, tuple[str, ...]],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, list[str]],
+    int,
+]:
     if not ctx.settings.fetch_product_pages or not roaster.verify_variant_pages:
-        return {}, {}, {}, 0
+        return {}, {}, {}, {}, {}, 0
 
-    products_needing_pages = [
-        product for product in products if product.url and len(product.variants) > 1
-    ]
+    products_needing_pages = [product for product in products if product.url]
     if not products_needing_pages:
-        return {}, {}, {}, 0
+        return {}, {}, {}, {}, {}, 0
 
     page_headers = merge_headers(
         {"User-Agent": USER_AGENT},
@@ -219,22 +225,24 @@ async def _fetch_visible_variant_titles(
             ctx.settings,
             ctx.robots_cache,
             ctx.logger,
+            limiter=ctx.limiter,
             jitter_multiplier=roaster.jitter_multiplier,
         )
 
     async def fetch(
         product: ProductCandidate,
-    ) -> tuple[str, tuple[str, ...], str, str]:
+    ) -> tuple[str, tuple[str, ...], str, str, str, str]:
         allowed = await robots_allows(
             ctx.http_client,
             product.url,
             ctx.settings,
             ctx.robots_cache,
             ctx.logger,
+            limiter=ctx.limiter,
             jitter_multiplier=roaster.jitter_multiplier,
         )
         if not allowed:
-            return product.url, (), "", "robots.txt disallows product page"
+            return product.url, (), "", "", "", "robots.txt disallows product page"
         response = await fetch_text_with_jitter(
             ctx.http_client,
             product.url,
@@ -245,14 +253,16 @@ async def _fetch_visible_variant_titles(
             jitter_multiplier=roaster.jitter_multiplier,
         )
         if response is None:
-            return product.url, (), "", "variant page request failed"
+            return product.url, (), "", "", "", "storefront page request failed"
         if response.status_code in STOREFRONT_UNAVAILABLE_STATUS_CODES:
             return (
                 product.url,
                 (),
                 STOREFRONT_UNAVAILABLE_STATUS,
+                "",
+                "",
                 (
-                    f"variant page returned status {response.status_code}; "
+                    f"storefront page returned status {response.status_code}; "
                     "treating product as not publicly buyable"
                 ),
             )
@@ -261,12 +271,33 @@ async def _fetch_visible_variant_titles(
                 product.url,
                 (),
                 "",
-                f"variant page returned status {response.status_code}",
+                "",
+                "",
+                f"storefront page returned status {response.status_code}",
             )
-        return product.url, extract_size_button_labels(response.text), "", ""
+        page_text = extract_product_jsonld_text(
+            response.text,
+            ctx.settings.page_text_max_chars,
+            page_url=product.url,
+        )
+        if not page_text:
+            page_text = sanitize_html_to_text(
+                response.text,
+                ctx.settings.page_text_max_chars,
+            )
+        return (
+            product.url,
+            extract_size_button_labels(response.text),
+            "",
+            trim_text_at_phrases(page_text, roaster.page_text_stop_phrases),
+            response.headers.get("last-modified", ""),
+            "",
+        )
 
     titles_by_url: dict[str, tuple[str, ...]] = {}
     storefront_status_by_url: dict[str, str] = {}
+    page_text_by_url: dict[str, str] = {}
+    http_last_modified_by_url: dict[str, str] = {}
     errors_by_url: dict[str, list[str]] = {}
     results = await asyncio.gather(
         *(fetch(product) for product in products_needing_pages),
@@ -275,19 +306,25 @@ async def _fetch_visible_variant_titles(
     for product, result in zip(products_needing_pages, results):
         if isinstance(result, BaseException):
             errors_by_url.setdefault(product.url, []).append(
-                f"variant page fetch raised: {result}"
+                f"storefront page fetch raised: {result}"
             )
             continue
-        url, titles, storefront_status, error = result
+        url, titles, storefront_status, page_text, http_last_modified, error = result
         if titles:
             titles_by_url[url] = titles
         if storefront_status:
             storefront_status_by_url[url] = storefront_status
+        if page_text:
+            page_text_by_url[url] = page_text
+        if http_last_modified:
+            http_last_modified_by_url[url] = http_last_modified
         if error:
             errors_by_url.setdefault(url, []).append(error)
     return (
         titles_by_url,
         storefront_status_by_url,
+        page_text_by_url,
+        http_last_modified_by_url,
         errors_by_url,
         len(products_needing_pages),
     )
@@ -414,11 +451,24 @@ async def _process_roaster_inner(
     (
         visible_variant_titles_by_url,
         storefront_status_by_url,
+        storefront_page_text_by_url,
+        storefront_last_modified_by_url,
         variant_errors_by_url,
         variant_page_fetch_count,
-    ) = await _fetch_visible_variant_titles(ctx, roaster, products)
+    ) = await _fetch_storefront_product_pages(ctx, roaster, products)
     for url, errors in variant_errors_by_url.items():
         errors_by_url.setdefault(url, []).extend(errors)
+    http_last_modified_by_url.update(
+        {
+            url: value
+            for url, value in storefront_last_modified_by_url.items()
+            if url not in http_last_modified_by_url
+        }
+    )
+    for product in products:
+        page_text = storefront_page_text_by_url.get(product.url, "")
+        if page_text:
+            page_text_by_id[product.product_id] = page_text
 
     descriptions_by_url = _build_descriptions_by_url(
         products,

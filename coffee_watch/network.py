@@ -108,6 +108,7 @@ async def robots_allows(
     settings: Settings,
     cache: dict[str, RobotFileParser],
     log: logging.Logger,
+    limiter: Optional[PerHostLimiter] = None,
     jitter_multiplier: float = 1.0,
 ) -> bool:
     parsed = urlsplit(products_url)
@@ -123,6 +124,7 @@ async def robots_allows(
         robots_url,
         settings,
         log,
+        limiter=limiter,
         jitter_multiplier=jitter_multiplier,
     )
     parser = RobotFileParser()
@@ -176,6 +178,7 @@ async def fetch_products_for_roaster(
             settings,
             robots_cache,
             log,
+            limiter=limiter,
             jitter_multiplier=roaster.jitter_multiplier,
         )
         if not allowed:
@@ -327,6 +330,7 @@ async def fetch_product_page_text(
         settings,
         robots_cache,
         log,
+        limiter=limiter,
         jitter_multiplier=jitter_multiplier,
     )
     if not product_allowed:
@@ -462,6 +466,7 @@ async def fetch_wix_product_sitemap_lastmods(
             settings,
             robots_cache,
             log,
+            limiter=limiter,
             jitter_multiplier=jitter_multiplier,
         )
         if not allowed:
