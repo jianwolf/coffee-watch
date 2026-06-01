@@ -51,6 +51,7 @@ class ProductCandidate:
     body_html: str = ""
     variants: tuple["VariantInfo", ...] = ()
     visible_variant_titles: tuple[str, ...] = ()
+    storefront_status: str = ""
     shopify_updated_at: str = ""
     shopify_published_at: str = ""
 

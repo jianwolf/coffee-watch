@@ -122,6 +122,39 @@ def test_catalog_product_formats_list_price_once_when_no_variants():
     assert item["price_source"] == "list_price"
 
 
+def test_catalog_product_does_not_price_storefront_unavailable_product():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Hidden Coffee",
+        url="https://example.com/products/hidden",
+        source="R",
+        variants=(
+            VariantInfo("125 g", "12.00", 125, True),
+            VariantInfo("250 g", "36.00", 250, True),
+        ),
+        storefront_status="storefront_unavailable",
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="shopify"),
+        raw_product_text="Tasting notes: mango, lychee.",
+        first_seen_at="2026-04-18T00:00:00+00:00",
+        is_new=False,
+        date_source="shopify_published_at",
+        update_date=date(2026, 4, 18),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=["variant page returned status 401"],
+    )
+
+    assert item["price"] == ""
+    assert item["price_variant"] == ""
+    assert item["price_label"] == ""
+    assert item["price_source"] == "storefront_unavailable"
+    assert item["availability"] == "unavailable"
+    assert item["storefront_status"] == "storefront_unavailable"
+
+
 def test_catalog_product_uses_smallest_storefront_visible_variant():
     product = ProductCandidate(
         product_id="p1",

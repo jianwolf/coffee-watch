@@ -8,6 +8,7 @@ from .constants import USER_AGENT
 from .models import ProductCandidate, RoasterRunStatus, RoasterSource, VariantInfo
 
 SCHEMA_VERSION = 1
+STOREFRONT_UNAVAILABLE_STATUS = "storefront_unavailable"
 
 
 def _clean(value: str) -> str:
@@ -116,6 +117,8 @@ def _price_label(price: str, price_variant: str) -> str:
 
 
 def _display_price(product: ProductCandidate) -> tuple[str, str, str, str]:
+    if product.storefront_status == STOREFRONT_UNAVAILABLE_STATUS:
+        return "", "", "", STOREFRONT_UNAVAILABLE_STATUS
     variant, source = _preferred_price_variant(product)
     if variant is not None:
         price = _clean(variant.price)
@@ -128,6 +131,8 @@ def _display_price(product: ProductCandidate) -> tuple[str, str, str, str]:
 
 
 def _availability(product: ProductCandidate) -> str:
+    if product.storefront_status == STOREFRONT_UNAVAILABLE_STATUS:
+        return "unavailable"
     if not product.variants:
         return "unknown"
     if any(variant.available for variant in product.variants):
@@ -174,6 +179,7 @@ def catalog_product_from_candidate(
         "availability": _availability(product),
         "variants": [_variant_to_dict(variant) for variant in product.variants],
         "visible_variant_titles": list(product.visible_variant_titles),
+        "storefront_status": product.storefront_status,
         "first_seen_at": first_seen_at,
         "is_new": is_new,
         "date_source": date_source,

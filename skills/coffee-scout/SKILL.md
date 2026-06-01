@@ -43,9 +43,10 @@ If subagents are available, the first three digest passes may be delegated indep
 1. Run the scraper or select the requested catalog.
 2. Load the catalog JSON and inspect `summary`, `products`, and each product's `errors`.
 3. Prefer products with source URLs, clear availability, credible roast/process/origin details, and recent `is_new` or `update_date` signals.
-4. Use preferences stated in the current conversation only. Do not assume persistent preferences unless the user states them.
-5. Preserve uncertainty: mark missing process, unclear availability, suspicious price, empty raw text, or scrape errors.
-6. Cite product URLs for every recommendation.
+4. Exclude products with `availability != "available"` or `storefront_status == "storefront_unavailable"` from recommendations; mention them only as scrape caveats when useful.
+5. Use preferences stated in the current conversation only. Do not assume persistent preferences unless the user states them.
+6. Preserve uncertainty: mark missing process, unclear availability, suspicious price, empty raw text, or scrape errors.
+7. Cite product URLs for every recommendation.
 
 ## Output
 
