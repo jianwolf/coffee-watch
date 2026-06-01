@@ -47,9 +47,11 @@ If subagents are available, the first three digest passes may be delegated indep
 4. Exclude products with `availability != "available"` or `storefront_status == "storefront_unavailable"` from recommendations; mention them only as scrape caveats when useful.
 5. Treat `is_new` but unavailable products as new scrape evidence, not buying candidates. In the new-products digest, count or mention excluded new products separately when that distinction matters.
 6. Use `price_label` when available so reports show the purchasable size and price together, such as `250 g = $34.25`, not just a bare dollar amount. Prefer `price_source=visible_variant` when explaining confidence.
-7. Use preferences stated in the current conversation only. Do not assume persistent preferences unless the user states them.
-8. Preserve uncertainty: mark missing process, unclear availability, suspicious price, empty raw text, or scrape errors.
-9. Cite product URLs for every recommendation.
+7. Do not treat missing Shopify-style variants as unknown availability for non-Shopify/Wix products that were discovered from public storefront pages. They can still be recommendation candidates, but preserve missing price or size as uncertainty.
+8. Treat `Default Title` and `Default Variant` as missing size labels, not as real purchasable sizes.
+9. Use preferences stated in the current conversation only. Do not assume persistent preferences unless the user states them.
+10. Preserve uncertainty: mark missing process, unclear availability, suspicious price, empty raw text, or scrape errors.
+11. Cite product URLs for every recommendation.
 
 ## Output
 
@@ -89,6 +91,7 @@ Before finalizing, self-check the fourth report:
 - Does it preserve uncertainty and cite product URLs?
 - If the user asked about scrape time, does it include a compact timing/status note rather than burying that information?
 - Does it show size-aware prices via `price_label` when available?
+- Does it avoid presenting placeholder variants such as `Default Title` as real sizes?
 - Does the new-products logic distinguish available new products from `is_new` products that are currently storefront-unavailable?
 
 Also scan the first three digest artifacts before finalizing. If they overuse "two bags" as a structural conclusion, rewrite that language as broader ranked menus, shortlist maps, or preference routes.

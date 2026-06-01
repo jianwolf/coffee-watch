@@ -124,6 +124,14 @@ SIZE_BUTTON_RE = re.compile(
     r"^\d+(?:\.\d+)?\s*(?:g|gram|grams|kg|oz|lb|lbs|pound|pounds)$",
     re.IGNORECASE,
 )
+SIZE_VALUE_RE = re.compile(
+    r"(?<![$A-Za-z0-9])(\d+(?:\.\d+)?)\s*(kg|g|gram|grams|oz|lb|lbs|pound|pounds)\b",
+    re.IGNORECASE,
+)
+PRODUCT_PAGE_PRICE_RE = re.compile(
+    r"(?:\$|\\\$|&#36;|&dollar;)\s*\d+(?:\.\d{2})?",
+    re.IGNORECASE,
+)
 JSONLD_SCRIPT_RE = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL,
@@ -217,6 +225,59 @@ def extract_size_button_labels(html: str) -> tuple[str, ...]:
         seen.add(key)
         labels.append(button)
     return tuple(labels)
+
+
+def _clean_price(value: str) -> str:
+    return (
+        value.strip()
+        .replace("&#36;", "$")
+        .replace("&dollar;", "$")
+        .replace("\\$", "$")
+    )
+
+
+def extract_product_page_price(html: str) -> str:
+    text = sanitize_html_to_text(html, 0, remove_boilerplate=False)
+    match = PRODUCT_PAGE_PRICE_RE.search(text)
+    return _clean_price(match.group(0)) if match else ""
+
+
+def extract_product_page_size_labels(html: str) -> tuple[str, ...]:
+    button_labels = extract_size_button_labels(html)
+    if button_labels:
+        return button_labels
+
+    text = sanitize_html_to_text(html, 0, remove_boilerplate=False)
+    labels: list[str] = []
+    seen: set[str] = set()
+    for label_match in re.finditer(r"\b(?:Bag\s+Size|Size)\*?\b", text, re.IGNORECASE):
+        window = text[label_match.end() : label_match.end() + 100]
+        for size_match in SIZE_VALUE_RE.finditer(window):
+            label = " ".join(size_match.group(0).split())
+            key = label.lower().replace(" ", "")
+            if key in seen:
+                continue
+            seen.add(key)
+            labels.append(label)
+            break
+    return tuple(labels)
+
+
+def grams_from_size_label(value: str) -> int:
+    match = SIZE_VALUE_RE.search(value)
+    if not match:
+        return 0
+    amount = float(match.group(1))
+    unit = match.group(2).lower()
+    if unit == "kg":
+        grams = amount * 1000
+    elif unit in {"lb", "lbs", "pound", "pounds"}:
+        grams = amount * 453.59237
+    elif unit == "oz":
+        grams = amount * 28.349523125
+    else:
+        grams = amount
+    return int(round(grams))
 
 
 def _iter_jsonld_objects(html: str) -> list[dict]:

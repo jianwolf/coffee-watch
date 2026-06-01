@@ -22,7 +22,7 @@ from .classify import (
 )
 from .constants import USER_AGENT
 from .context import RunContext
-from .models import ProductCandidate, RoasterRunStatus, RoasterSource
+from .models import ProductCandidate, RoasterRunStatus, RoasterSource, VariantInfo
 from .network import (
     fetch_product_page_text,
     fetch_products_for_roaster,
@@ -41,8 +41,10 @@ from .report_status import (
 )
 from .reporting import make_roaster_catalog_path, save_json
 from .text_utils import (
+    extract_product_page_price,
+    extract_product_page_size_labels,
     extract_product_jsonld_text,
-    extract_size_button_labels,
+    grams_from_size_label,
     sanitize_html_to_text,
     trim_text_at_phrases,
 )
@@ -193,15 +195,16 @@ async def _fetch_storefront_product_pages(
     dict[str, str],
     dict[str, str],
     dict[str, str],
+    dict[str, str],
     dict[str, list[str]],
     int,
 ]:
     if not ctx.settings.fetch_product_pages or not roaster.verify_variant_pages:
-        return {}, {}, {}, {}, {}, 0
+        return {}, {}, {}, {}, {}, {}, 0
 
     products_needing_pages = [product for product in products if product.url]
     if not products_needing_pages:
-        return {}, {}, {}, {}, {}, 0
+        return {}, {}, {}, {}, {}, {}, 0
 
     page_headers = merge_headers(
         {"User-Agent": USER_AGENT},
@@ -231,7 +234,7 @@ async def _fetch_storefront_product_pages(
 
     async def fetch(
         product: ProductCandidate,
-    ) -> tuple[str, tuple[str, ...], str, str, str, str]:
+    ) -> tuple[str, tuple[str, ...], str, str, str, str, str]:
         allowed = await robots_allows(
             ctx.http_client,
             product.url,
@@ -242,7 +245,7 @@ async def _fetch_storefront_product_pages(
             jitter_multiplier=roaster.jitter_multiplier,
         )
         if not allowed:
-            return product.url, (), "", "", "", "robots.txt disallows product page"
+            return product.url, (), "", "", "", "", "robots.txt disallows product page"
         response = await fetch_text_with_jitter(
             ctx.http_client,
             product.url,
@@ -253,11 +256,12 @@ async def _fetch_storefront_product_pages(
             jitter_multiplier=roaster.jitter_multiplier,
         )
         if response is None:
-            return product.url, (), "", "", "", "storefront page request failed"
+            return product.url, (), "", "", "", "", "storefront page request failed"
         if response.status_code in STOREFRONT_UNAVAILABLE_STATUS_CODES:
             return (
                 product.url,
                 (),
+                "",
                 STOREFRONT_UNAVAILABLE_STATUS,
                 "",
                 "",
@@ -270,6 +274,7 @@ async def _fetch_storefront_product_pages(
             return (
                 product.url,
                 (),
+                "",
                 "",
                 "",
                 "",
@@ -287,7 +292,8 @@ async def _fetch_storefront_product_pages(
             )
         return (
             product.url,
-            extract_size_button_labels(response.text),
+            extract_product_page_size_labels(response.text),
+            extract_product_page_price(response.text),
             "",
             trim_text_at_phrases(page_text, roaster.page_text_stop_phrases),
             response.headers.get("last-modified", ""),
@@ -295,6 +301,7 @@ async def _fetch_storefront_product_pages(
         )
 
     titles_by_url: dict[str, tuple[str, ...]] = {}
+    price_by_url: dict[str, str] = {}
     storefront_status_by_url: dict[str, str] = {}
     page_text_by_url: dict[str, str] = {}
     http_last_modified_by_url: dict[str, str] = {}
@@ -309,9 +316,19 @@ async def _fetch_storefront_product_pages(
                 f"storefront page fetch raised: {result}"
             )
             continue
-        url, titles, storefront_status, page_text, http_last_modified, error = result
+        (
+            url,
+            titles,
+            price,
+            storefront_status,
+            page_text,
+            http_last_modified,
+            error,
+        ) = result
         if titles:
             titles_by_url[url] = titles
+        if price:
+            price_by_url[url] = price
         if storefront_status:
             storefront_status_by_url[url] = storefront_status
         if page_text:
@@ -322,11 +339,56 @@ async def _fetch_storefront_product_pages(
             errors_by_url.setdefault(url, []).append(error)
     return (
         titles_by_url,
+        price_by_url,
         storefront_status_by_url,
         page_text_by_url,
         http_last_modified_by_url,
         errors_by_url,
         len(products_needing_pages),
+    )
+
+
+def _variant_price_from_page_price(price: str) -> str:
+    return price.removeprefix("$").strip()
+
+
+def _with_storefront_purchase_details(
+    product: ProductCandidate,
+    visible_titles: tuple[str, ...],
+    page_price: str,
+    storefront_status: str,
+) -> ProductCandidate:
+    variants = product.variants
+    list_price = product.list_price
+    available_price = page_price or list_price
+    if not variants and visible_titles and available_price:
+        title = visible_titles[0]
+        variants = (
+            VariantInfo(
+                title=title,
+                price=_variant_price_from_page_price(available_price),
+                grams=grams_from_size_label(title),
+                available=True,
+            ),
+        )
+        list_price = ""
+    elif page_price and not list_price:
+        list_price = page_price
+
+    if (
+        not visible_titles
+        and not storefront_status
+        and variants == product.variants
+        and list_price == product.list_price
+    ):
+        return product
+
+    return replace(
+        product,
+        visible_variant_titles=visible_titles,
+        storefront_status=storefront_status,
+        variants=variants,
+        list_price=list_price,
     )
 
 
@@ -450,6 +512,7 @@ async def _process_roaster_inner(
     ) = await _fetch_missing_product_pages(ctx, roaster, products, page_text_by_id)
     (
         visible_variant_titles_by_url,
+        storefront_price_by_url,
         storefront_status_by_url,
         storefront_page_text_by_url,
         storefront_last_modified_by_url,
@@ -493,12 +556,14 @@ async def _process_roaster_inner(
     catalog_products: list[dict[str, Any]] = []
     for product in products:
         visible_titles = visible_variant_titles_by_url.get(product.url, ())
+        page_price = storefront_price_by_url.get(product.url, "")
         storefront_status = storefront_status_by_url.get(product.url, "")
-        if visible_titles or storefront_status:
-            product = replace(
+        if visible_titles or page_price or storefront_status:
+            product = _with_storefront_purchase_details(
                 product,
-                visible_variant_titles=visible_titles,
-                storefront_status=storefront_status,
+                visible_titles,
+                page_price,
+                storefront_status,
             )
         first_seen_at = first_seen_by_url.get(product.url, "")
         update_date, date_source = resolve_update_date(

@@ -20,7 +20,7 @@ def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str:
         return ""
     for label in labels:
         pattern = re.compile(
-            rf"\b{re.escape(label)}\b\s*[:\-]\s*([^|.;\n]+)",
+            rf"\b{re.escape(label)}\b\s*[:|\-]\s*([^|.;\n]+)",
             re.IGNORECASE,
         )
         match = pattern.search(text)
@@ -30,11 +30,48 @@ def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str:
 
 
 def _split_notes(value: str) -> list[str]:
-    cleaned = _clean(value)
+    cleaned = _trim_notes_value(_clean(value))
     if not cleaned:
         return []
     parts = re.split(r"[,;|]|\s*/\s*", cleaned)
-    return [part.strip(" .") for part in parts if part.strip(" .")]
+    notes: list[str] = []
+    for part in parts:
+        note = _trim_note(part.strip(" ."))
+        if note:
+            notes.append(note)
+    return notes
+
+
+def _trim_notes_value(value: str) -> str:
+    return _trim_at_markers(
+        value,
+        (
+            " This ",
+            " On the ",
+            " is ",
+            " It ",
+            " The ",
+            " A ",
+            " As ",
+            " Coming ",
+        ),
+    )
+
+
+def _trim_note(value: str) -> str:
+    trimmed = _trim_at_markers(value, (" is ",))
+    words = trimmed.split()
+    if len(words) > 2 and words[0].lower() == "candy":
+        return words[0]
+    return trimmed
+
+
+def _trim_at_markers(value: str, markers: tuple[str, ...]) -> str:
+    for marker in markers:
+        index = value.find(marker)
+        if index > 0:
+            return value[:index].strip(" .")
+    return value
 
 
 def _extract_tasting_notes(text: str) -> list[str]:
@@ -42,9 +79,13 @@ def _extract_tasting_notes(text: str) -> list[str]:
         text,
         (
             "tasting notes",
+            "tasting note",
             "taste notes",
+            "taste note",
             "flavor notes",
+            "flavor note",
             "flavour notes",
+            "flavour note",
             "notes",
             "flavors",
             "flavours",
@@ -65,6 +106,10 @@ def _variant_to_dict(variant: VariantInfo) -> dict[str, Any]:
 
 def _normalize_variant_title(title: str) -> str:
     return re.sub(r"\s+", "", title.strip().lower())
+
+
+def _is_default_variant_title(title: str) -> bool:
+    return _normalize_variant_title(title) in {"defaulttitle", "defaultvariant"}
 
 
 def _variant_sort_key(variant: VariantInfo) -> tuple[int, int, int, str]:
@@ -149,7 +194,9 @@ def _display_price(product: ProductCandidate) -> tuple[str, str, str, str]:
     variant, source = _preferred_price_variant(product)
     if variant is not None:
         price = _clean(variant.price)
-        price_variant = _clean(variant.title)
+        price_variant = (
+            "" if _is_default_variant_title(variant.title) else _clean(variant.title)
+        )
         return price, price_variant, _price_label(price, price_variant), source
     list_price = _clean(product.list_price)
     if list_price:
@@ -157,10 +204,22 @@ def _display_price(product: ProductCandidate) -> tuple[str, str, str, str]:
     return "", "", "", ""
 
 
-def _availability(product: ProductCandidate) -> str:
+def _badge_indicates_unavailable(badge: str) -> bool:
+    normalized = badge.strip().lower()
+    return any(
+        phrase in normalized
+        for phrase in ("sold out", "out of stock", "unavailable")
+    )
+
+
+def _availability(product: ProductCandidate, roaster: RoasterSource) -> str:
     if product.storefront_status == STOREFRONT_UNAVAILABLE_STATUS:
         return "unavailable"
+    if _badge_indicates_unavailable(product.list_badge):
+        return "unavailable"
     if not product.variants:
+        if roaster.platform != "shopify" and product.url:
+            return "available"
         return "unknown"
     if any(variant.available for variant in product.variants):
         return "available"
@@ -203,7 +262,7 @@ def catalog_product_from_candidate(
         "origin": origin,
         "process": process,
         "tasting_notes": _extract_tasting_notes(raw_product_text),
-        "availability": _availability(product),
+        "availability": _availability(product, roaster),
         "variants": [_variant_to_dict(variant) for variant in product.variants],
         "visible_variant_titles": list(product.visible_variant_titles),
         "storefront_status": product.storefront_status,

@@ -96,6 +96,33 @@ def test_catalog_product_prefers_available_variant_over_list_price():
     assert item["price_source"] == "variant"
 
 
+def test_catalog_product_extracts_pipe_separated_singular_tasting_note():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Pipe Notes Coffee",
+        url="https://example.com/product-page/pipe-notes",
+        source="R",
+        variants=(),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="wix"),
+        raw_product_text=(
+            "Description: Tasting note | Floral, Berries, Plum, Red Grape "
+            "This new micro-lot is delicate."
+        ),
+        first_seen_at="2026-04-18T00:00:00+00:00",
+        is_new=False,
+        date_source="wix_lastmod",
+        update_date=date(2026, 4, 18),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["tasting_notes"] == ["Floral", "Berries", "Plum", "Red Grape"]
+
+
 def test_catalog_product_formats_list_price_once_when_no_variants():
     product = ProductCandidate(
         product_id="p1",
@@ -120,6 +147,83 @@ def test_catalog_product_formats_list_price_once_when_no_variants():
     assert item["price"] == "$22.00"
     assert item["price_label"] == "$22.00"
     assert item["price_source"] == "list_price"
+
+
+def test_catalog_product_treats_wix_html_product_without_variants_as_available():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Wix Coffee",
+        url="https://example.com/product-page/wix-coffee",
+        source="R",
+        list_price="",
+        variants=(),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="wix"),
+        raw_product_text="Tasting notes: mango, longan.",
+        first_seen_at="2026-04-18T00:00:00+00:00",
+        is_new=False,
+        date_source="wix_lastmod",
+        update_date=date(2026, 4, 18),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["availability"] == "available"
+
+
+def test_catalog_product_honors_sold_out_badge_without_variants():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Sold Out Wix Coffee",
+        url="https://example.com/product-page/sold-out-wix-coffee",
+        source="R",
+        list_badge="Sold Out",
+        variants=(),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="wix"),
+        raw_product_text="Tasting notes: apple.",
+        first_seen_at="2026-04-18T00:00:00+00:00",
+        is_new=False,
+        date_source="wix_lastmod",
+        update_date=date(2026, 4, 18),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["availability"] == "unavailable"
+
+
+def test_catalog_product_omits_default_title_from_price_label():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Single Variant Coffee",
+        url="https://example.com/products/single-variant",
+        source="R",
+        variants=(VariantInfo("Default Title", "53.00", 0, True),),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="shopify"),
+        raw_product_text="Tasting notes: raspberry, jasmine.",
+        first_seen_at="2026-04-18T00:00:00+00:00",
+        is_new=False,
+        date_source="shopify_published_at",
+        update_date=date(2026, 4, 18),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["price"] == "53.00"
+    assert item["price_variant"] == ""
+    assert item["price_label"] == "$53.00"
+    assert item["price_source"] == "variant"
 
 
 def test_catalog_product_does_not_price_storefront_unavailable_product():

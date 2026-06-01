@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urljoin
@@ -17,14 +16,8 @@ from .models import (
     RoasterSource,
     VariantInfo,
 )
-from .text_utils import LinkParser, guess_name_from_url
+from .text_utils import LinkParser, grams_from_size_label, guess_name_from_url
 from .url_utils import canonicalize_url, matches_patterns, normalize_base_url
-
-
-VARIANT_WEIGHT_RE = re.compile(
-    r"(?<![$A-Za-z0-9])(\d+(?:\.\d+)?)\s*(kg|g|gram|grams|oz|lb|lbs|pound|pounds)\b",
-    re.IGNORECASE,
-)
 
 
 def load_denylist(path: Path) -> set[str]:
@@ -315,20 +308,7 @@ def product_id_from_url(url: str) -> str:
 
 
 def _grams_from_variant_label(value: str) -> int:
-    match = VARIANT_WEIGHT_RE.search(value)
-    if not match:
-        return 0
-    amount = float(match.group(1))
-    unit = match.group(2).lower()
-    if unit == "kg":
-        grams = amount * 1000
-    elif unit in {"lb", "lbs", "pound", "pounds"}:
-        grams = amount * 453.59237
-    elif unit == "oz":
-        grams = amount * 28.349523125
-    else:
-        grams = amount
-    return int(round(grams))
+    return grams_from_size_label(value)
 
 
 def _grams_from_variant(variant: dict[str, Any]) -> int:

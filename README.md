@@ -150,7 +150,7 @@ Example `config/settings.json`:
 }
 ```
 
-Per-roaster configs can set `verify_variant_pages: true` when a storefront hides sample, wholesale, or business-only variants from the product page even though they still appear in the catalog API. When enabled, Coffee Watch fetches product pages for that roaster and uses the visible size buttons to choose the displayed buyable price label. Public product pages returning 401, 403, 404, or 410 are treated as not publicly buyable, so their API variants are preserved as evidence but not used for displayed pricing.
+Per-roaster configs can set `verify_variant_pages: true` when a storefront hides sample, wholesale, or business-only variants from the product page even though they still appear in the catalog API. When enabled, Coffee Watch fetches product pages for that roaster and uses storefront-visible size choices, page price, and page text to choose the displayed buyable price label. For non-Shopify HTML/Wix products without API variants, visible product-page price plus Bag Size text can be promoted into the selected price label, such as `100g = $24.00`. Public product pages returning 401, 403, 404, or 410 are treated as not publicly buyable, so their API variants are preserved as evidence but not used for displayed pricing.
 
 ## Outputs
 

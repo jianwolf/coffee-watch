@@ -226,6 +226,8 @@ Do not make every roaster section a forced two-bag bundle, and do not cap a roas
 Do not use "final choice", "primary purchase path", "my conclusion", or similar language that implies Codex has already selected the roaster or exact checkout.
 If scrape runtime or web-fetch cost matters to the user, include a short section with the observed elapsed time, status distribution, and any access-control caveats.
 Use size-aware display prices when available, for example `250 g = $34.25`, so the reader can tell what can actually be bought.
+Do not treat non-Shopify/Wix products from public storefront pages as unavailable merely because they have no Shopify variants. Preserve missing price or bag size as uncertainty instead.
+Do not present Shopify placeholder variant labels such as `Default Title` or `Default Variant` as real sizes; use the bare price and note that size was not captured when it matters.
 End by inviting follow-up preferences or questions. The final line must be exactly: 你这次有什么品味偏好或问题？
 Do not invent facts; cite product URLs and mark scrape uncertainty.
 ```
