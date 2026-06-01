@@ -68,7 +68,5 @@ def setup_logging(
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)
 
-    logging.getLogger("google_genai.models").setLevel(logging.WARNING)
-
 
 __all__ = ["JsonFormatter", "setup_logging"]

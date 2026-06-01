@@ -1,10 +1,4 @@
-"""Run-scoped context bundle.
-
-Collects the objects that travel together through the orchestration code so
-individual signatures don't have to pass a dozen parameters each. Not
-``frozen=True`` because ``robots_cache`` accumulates entries as the run
-progresses.
-"""
+"""Run-scoped context bundle for scraping."""
 
 from __future__ import annotations
 
@@ -17,7 +11,6 @@ import httpx
 
 from .config import Settings
 from .http_limits import PerHostLimiter
-from .llm_backend import LLMBackend
 from .seen_products import SeenProducts
 
 
@@ -28,9 +21,7 @@ class RunContext:
     http_client: httpx.AsyncClient
     limiter: PerHostLimiter
     seen_products: SeenProducts
-    llm: LLMBackend
     run_id: str
-    language: str
     denylist: set[str]
     assets_dir: Path
     robots_cache: dict[str, RobotFileParser] = field(default_factory=dict)

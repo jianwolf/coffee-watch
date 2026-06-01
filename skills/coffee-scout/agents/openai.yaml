@@ -1,0 +1,6 @@
+interface:
+  display_name: "Coffee Scout"
+  short_description: "Analyze Coffee Watch catalogs for buying picks"
+  default_prompt: "Use $coffee-scout to scrape Coffee Watch and recommend what I should buy in Chinese."
+policy:
+  allow_implicit_invocation: true

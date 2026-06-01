@@ -28,8 +28,10 @@ class PerHostLimiter:
     def _semaphore_for(self, key: str) -> asyncio.Semaphore:
         sem = self._locks.get(key)
         if sem is None:
-            sem = asyncio.Semaphore(self._per_host)
-            self._locks[key] = sem
+            # setdefault closes the TOCTOU window: if two coroutines both saw
+            # the key as missing, the second one's freshly-built Semaphore is
+            # discarded and the first instance is shared.
+            sem = self._locks.setdefault(key, asyncio.Semaphore(self._per_host))
         return sem
 
     @asynccontextmanager

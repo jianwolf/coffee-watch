@@ -6,12 +6,10 @@ isolation (no asyncio, no httpx, no LLM).
 
 from __future__ import annotations
 
-import logging
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Optional
+from typing import Optional
 
-from .config import Settings
 from .models import ProductCandidate
 from .seen_products import SeenProducts
 
@@ -97,14 +95,36 @@ def classify_new_products(
     now_iso = datetime.now(timezone.utc).isoformat() if persist_seen else ""
     days = max(1, window_days)
     window_start = run_day - timedelta(days=days - 1)
+
+    # Prefetch URL-based seen_at in one round-trip; only fall back to the
+    # hash-keyed lookup for products that didn't match by URL.
+    url_seen_at = seen_products.first_seen_for_urls(
+        [product.url for product in products]
+    )
+    pending_hashes: dict[str, str] = {}
+    for product in products:
+        if url_seen_at.get(product.url):
+            continue
+        description = descriptions_by_url.get(product.url, "")
+        seen_hash = seen_products.compute_hash(
+            product.url, product.name, description
+        )
+        pending_hashes[seen_hash] = product.url
+    hash_seen_at = (
+        seen_products.first_seen_for_hashes(list(pending_hashes.keys()))
+        if pending_hashes
+        else {}
+    )
+
+    pending_records: list[tuple] = []
     for product in products:
         description = descriptions_by_url.get(product.url, "")
-        # Prefer URL-based lookup: description edits should not reset seen_at.
-        seen_at = seen_products.first_seen_for_url(product.url)
+        seen_at = url_seen_at.get(product.url, "")
         if not seen_at:
-            seen_hash = seen_products.compute_hash(product.url, product.name, description)
-            seen_entry = seen_products.get(seen_hash)
-            seen_at = seen_entry.first_seen_at if seen_entry else ""
+            seen_hash = seen_products.compute_hash(
+                product.url, product.name, description
+            )
+            seen_at = hash_seen_at.get(seen_hash, "")
         http_last_modified = http_last_modified_by_url.get(product.url, "")
         wix_lastmod = wix_lastmod_by_url.get(product.url, "")
 
@@ -121,16 +141,20 @@ def classify_new_products(
                 continue
 
         if persist_seen:
-            seen_hash = seen_products.compute_hash(product.url, product.name, description)
-            seen_products.record(
-                seen_hash,
-                product.url,
-                product.name,
-                description,
-                now_iso,
-                shopify_updated_at=product.shopify_updated_at,
-                roaster=product.source,
-                platform=platform,
+            seen_hash = seen_products.compute_hash(
+                product.url, product.name, description
+            )
+            pending_records.append(
+                (
+                    seen_hash,
+                    product.url,
+                    product.name,
+                    description,
+                    now_iso,
+                    product.shopify_updated_at,
+                    product.source,
+                    platform,
+                )
             )
 
         if updated_date < window_start or updated_date > run_day:
@@ -139,90 +163,14 @@ def classify_new_products(
         new_urls.add(product.url)
         if source in by_source:
             by_source[source] += 1
+
+    if pending_records:
+        seen_products.record_many(pending_records)
     return new_urls, by_source, undated, outside_window
 
 
-def build_filtered_new_items_for_digest(
-    reports: list[tuple[str, str]],
-    run_id: str,
-    settings: Settings,
-    logger: logging.Logger,
-    mode_label: str,
-    items_loader,
-    *,
-    window_days: int = NEW_PRODUCTS_WINDOW_DAYS,
-    persist_seen: bool = False,
-) -> list[dict[str, Any]]:
-    """Re-run classification over previously captured coffee-list items.
-
-    ``items_loader(reports)`` returns the structured coffee-list items
-    (preferably from JSON sidecars; falls back to markdown-grep).
-    """
-    new_items = items_loader(reports)
-    if not new_items:
-        return new_items
-
-    seen_products = SeenProducts(settings.seen_db_path, logger)
-    try:
-        digest_products: list[ProductCandidate] = []
-        descriptions_by_url: dict[str, str] = {}
-        http_last_modified_by_url: dict[str, str] = {}
-        wix_lastmod_by_url: dict[str, str] = {}
-        for item in new_items:
-            url = str(item.get("url", "") or "").strip()
-            product = ProductCandidate(
-                product_id=str(item.get("product_id", "") or ""),
-                name=str(item.get("name", "") or ""),
-                url=url,
-                source=str(item.get("roaster", "") or ""),
-                list_price=str(item.get("list_price", "") or ""),
-                list_badge=str(item.get("badge", "") or ""),
-                body_html="",
-                variants=(),
-                shopify_updated_at=str(item.get("shopify_updated_at", "") or ""),
-                shopify_published_at=str(item.get("shopify_published_at", "") or ""),
-            )
-            digest_products.append(product)
-            descriptions_by_url[url] = str(item.get("description", "") or "")
-        run_day = datetime.strptime(run_id, "%Y%m%d").date()
-        new_urls, by_source, undated, outside_window = classify_new_products(
-            digest_products,
-            run_day,
-            seen_products,
-            descriptions_by_url,
-            http_last_modified_by_url,
-            wix_lastmod_by_url,
-            "unknown",
-            window_days=window_days,
-            persist_seen=persist_seen,
-        )
-        filtered_new_items = [
-            item
-            for item, product in zip(new_items, digest_products)
-            if product.url and product.url in new_urls
-        ]
-        logger.info(
-            "%s new products (last %d days ending %s UTC): %d "
-            "[shopify_published_at=%d, http_last_modified=%d, "
-            "wix_lastmod=%d, seen_at=%d, undated=%d, outside_window=%d].",
-            mode_label,
-            max(1, window_days),
-            run_id,
-            len(filtered_new_items),
-            by_source["shopify_published_at"],
-            by_source["http_last_modified"],
-            by_source["wix_lastmod"],
-            by_source["seen_at"],
-            undated,
-            outside_window,
-        )
-    finally:
-        seen_products.close()
-    return filtered_new_items
-
-
 def log_new_products_summary(
-    logger: logging.Logger,
+    logger,
     roaster_name: str,
     run_id: str,
     new_urls: set[str],

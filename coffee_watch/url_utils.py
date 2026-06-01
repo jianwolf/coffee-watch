@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import functools
 import re
+from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 
@@ -37,13 +39,19 @@ def build_url_with_params(base_url: str, path: str, params: dict[str, str]) -> s
     return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, ""))
 
 
+@functools.lru_cache(maxsize=512)
+def _compile_regex(source: str) -> Optional[re.Pattern[str]]:
+    try:
+        return re.compile(source)
+    except re.error:
+        return None
+
+
 def matches_patterns(url: str, include: tuple[str, ...], exclude: tuple[str, ...]) -> bool:
     def match(pattern: str) -> bool:
         if pattern.startswith("re:"):
-            try:
-                return re.search(pattern[3:], url) is not None
-            except re.error:
-                return False
+            compiled = _compile_regex(pattern[3:])
+            return compiled is not None and compiled.search(url) is not None
         return pattern in url
 
     if exclude and any(match(pattern) for pattern in exclude):

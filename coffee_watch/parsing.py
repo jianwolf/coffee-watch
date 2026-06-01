@@ -446,6 +446,41 @@ def parse_products_html(
     return products
 
 
+def parse_products_html_path(
+    content: bytes,
+    base_url: str,
+    roaster: RoasterSource,
+    max_count: int,
+    logger: logging.Logger,
+) -> list[ProductCandidate]:
+    """Parse a products page response as HTML, skipping any JSON attempt.
+
+    Used when the caller already attempted to decode the bytes as JSON and
+    wants a single deterministic HTML fallback.
+    """
+    text = content.decode("utf-8", errors="ignore")
+    if roaster.products_parser:
+        parsed = parse_catalog_html(
+            roaster.products_parser,
+            text,
+            base_url,
+            roaster,
+            max_count,
+            logger,
+        )
+        if parsed:
+            return parsed
+    return parse_products_html(
+        text,
+        base_url,
+        roaster.name,
+        max_count,
+        roaster.product_link_patterns,
+        roaster.product_link_exclude_patterns,
+        roaster.exclude_title_keywords,
+    )
+
+
 def parse_products_response(
     content: bytes,
     content_type: str,
@@ -472,24 +507,4 @@ def parse_products_response(
             logger.warning(
                 "Failed to parse JSON for %s; falling back to HTML.", roaster.name
             )
-    text = content.decode("utf-8", errors="ignore")
-    if roaster.products_parser:
-        parsed = parse_catalog_html(
-            roaster.products_parser,
-            text,
-            base_url,
-            roaster,
-            max_count,
-            logger,
-        )
-        if parsed:
-            return parsed
-    return parse_products_html(
-        text,
-        base_url,
-        roaster.name,
-        max_count,
-        roaster.product_link_patterns,
-        roaster.product_link_exclude_patterns,
-        roaster.exclude_title_keywords,
-    )
+    return parse_products_html_path(content, base_url, roaster, max_count, logger)

@@ -5,21 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "coffee-watch"
 version = "0.2.0"
-description = "Low-frequency monitoring agent that checks specialty coffee roasters and evaluates releases with Gemini or local MLX models."
+description = "Low-frequency specialty coffee catalog scraper that writes normalized JSON for interactive Codex analysis."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "Jian Wang" }]
 dependencies = [
     "httpx[http2]>=0.27,<1.0",
-    "google-genai>=0.3,<2.0",
 ]
 
 [project.optional-dependencies]
-mlx = [
-    "mlx-lm==0.29.1; sys_platform == 'darwin'",
-    "mlx-vlm==0.3.12; sys_platform == 'darwin'",
-]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -29,6 +24,7 @@ dev = [
 
 [project.scripts]
 coffee-watch = "coffee_watch.cli:main"
+scrape-coffee = "coffee_watch.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["coffee_watch*"]

@@ -81,17 +81,13 @@ class PaginationConfig:
 
 @dataclass(frozen=True)
 class RoasterRunStatus:
-    """Structured record of a single roaster's outcome within a run.
-
-    Persisted as ``reports/YYYYMMDD-<slug>.status.json`` so resume/digest logic
-    does not need to grep generated markdown.
-    """
+    """Structured record of a single roaster's scrape outcome."""
 
     roaster: str
     run_id: str
     status: str  # success | failure | empty | skipped
     attempts: int
-    report_path: Optional[str]
+    catalog_path: Optional[str]
     products_found: int
     new_products: int
     fetched_pages: int
@@ -109,7 +105,7 @@ class RoasterRunStatus:
             "run_id": self.run_id,
             "status": self.status,
             "attempts": self.attempts,
-            "report_path": self.report_path,
+            "catalog_path": self.catalog_path,
             "products_found": self.products_found,
             "new_products": self.new_products,
             "fetched_pages": self.fetched_pages,

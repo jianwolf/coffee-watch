@@ -120,6 +120,82 @@ class SeenProducts:
             return ""
         return str(row[0])
 
+    def first_seen_for_urls(self, urls: list[str]) -> dict[str, str]:
+        """Bulk variant of :meth:`first_seen_for_url`.
+
+        Returns a mapping ``url -> earliest first_seen_at`` for every URL with
+        at least one non-empty ``first_seen_at`` row. URLs absent from the map
+        are unknown — callers should treat them as missing.
+        """
+        cleaned = [u.strip() for u in urls if u and u.strip()]
+        if not cleaned:
+            return {}
+        unique = list(dict.fromkeys(cleaned))
+        out: dict[str, str] = {}
+        # SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999 (32766 on newer
+        # builds); 500 is a safe chunk that keeps the placeholder list short.
+        chunk_size = 500
+        with self._lock:
+            for start in range(0, len(unique), chunk_size):
+                chunk = unique[start : start + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor = self._conn.execute(
+                    f"SELECT url, MIN(first_seen_at) FROM seen_products "
+                    f"WHERE url IN ({placeholders}) AND first_seen_at != '' "
+                    f"GROUP BY url",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    if row[1] is not None:
+                        out[str(row[0])] = str(row[1])
+        return out
+
+    def first_seen_for_hashes(self, hashes: list[str]) -> dict[str, str]:
+        """Return ``hash -> first_seen_at`` for every provided hash that exists."""
+        cleaned = [h for h in hashes if h]
+        if not cleaned:
+            return {}
+        unique = list(dict.fromkeys(cleaned))
+        out: dict[str, str] = {}
+        chunk_size = 500
+        with self._lock:
+            for start in range(0, len(unique), chunk_size):
+                chunk = unique[start : start + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor = self._conn.execute(
+                    f"SELECT hash, first_seen_at FROM seen_products "
+                    f"WHERE hash IN ({placeholders})",
+                    chunk,
+                )
+                for row in cursor.fetchall():
+                    out[str(row[0])] = str(row[1] or "")
+        return out
+
+    _UPSERT_SQL = """
+        INSERT INTO seen_products
+            (hash, url, title, description, first_seen_at, shopify_updated_at, roaster, platform)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(hash) DO UPDATE SET
+            url=excluded.url,
+            title=excluded.title,
+            description=excluded.description,
+            shopify_updated_at=CASE
+                WHEN excluded.shopify_updated_at != ''
+                THEN excluded.shopify_updated_at
+                ELSE seen_products.shopify_updated_at
+            END,
+            roaster=CASE
+                WHEN excluded.roaster != ''
+                THEN excluded.roaster
+                ELSE seen_products.roaster
+            END,
+            platform=CASE
+                WHEN excluded.platform != ''
+                THEN excluded.platform
+                ELSE seen_products.platform
+            END
+        """
+
     def record(
         self,
         hash_value: str,
@@ -134,30 +210,7 @@ class SeenProducts:
         try:
             with self._lock:
                 self._conn.execute(
-                    """
-                    INSERT INTO seen_products
-                        (hash, url, title, description, first_seen_at, shopify_updated_at, roaster, platform)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(hash) DO UPDATE SET
-                        url=excluded.url,
-                        title=excluded.title,
-                        description=excluded.description,
-                        shopify_updated_at=CASE
-                            WHEN excluded.shopify_updated_at != ''
-                            THEN excluded.shopify_updated_at
-                            ELSE seen_products.shopify_updated_at
-                        END,
-                        roaster=CASE
-                            WHEN excluded.roaster != ''
-                            THEN excluded.roaster
-                            ELSE seen_products.roaster
-                        END,
-                        platform=CASE
-                            WHEN excluded.platform != ''
-                            THEN excluded.platform
-                            ELSE seen_products.platform
-                        END
-                    """,
+                    self._UPSERT_SQL,
                     (
                         hash_value,
                         url,
@@ -174,6 +227,24 @@ class SeenProducts:
             if self._logger:
                 self._logger.warning(
                     "Failed to record seen product %s: %s", url, exc
+                )
+
+    def record_many(self, rows: list[tuple]) -> None:
+        """Bulk variant of :meth:`record`. Each ``rows`` entry is the same
+        positional tuple ``record`` would build:
+        ``(hash, url, title, description, first_seen_at,
+        shopify_updated_at, roaster, platform)``.
+        """
+        if not rows:
+            return
+        try:
+            with self._lock:
+                self._conn.executemany(self._UPSERT_SQL, rows)
+                self._conn.commit()
+        except sqlite3.Error as exc:
+            if self._logger:
+                self._logger.warning(
+                    "Failed to bulk-record %d seen products: %s", len(rows), exc
                 )
 
     async def aget(self, hash_value: str) -> Optional[SeenProduct]:

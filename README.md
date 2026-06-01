@@ -1,48 +1,53 @@
 # Coffee Watch
 
-I'm a machine learning engineer who loves making and drinking coffee. I pursue top-quality and interesting coffee choices, but I don't have detailed knowledge about choosing roasters, farms, or beans. This project is an agentic LLM system that monitors specialty roasters and helps me make informed buying decisions.
+Coffee Watch is a low-frequency specialty coffee catalog scraper. It crawls roaster catalogs politely, tracks first-seen products, and writes normalized JSON that Codex can analyze interactively with the bundled `coffee-scout` skill.
 
-Coffee Watch is a low-frequency monitoring tool that:
-- crawls roaster catalogs politely
-- tracks first-seen products in SQLite
-- evaluates standout coffees with either Gemini or a local MLX-served model
-- writes per-roaster reports plus cross-roaster digests
+The project is intentionally split into two parts:
+
+```text
+scrape roaster catalogs -> normalized JSON/state -> Codex coffee-scout analysis
+```
+
+The scraper does not call Gemini, MLX, or any other model API. It preserves evidence and source URLs; the buying judgment happens later in Codex.
 
 ## Highlights
-- Polite crawling with `robots.txt` checks, jittered pacing, and a fixed `User-Agent`
-- Shared task prompts across Gemini and local MLX runs for cleaner model/runtime comparison
-- Structured run outputs: markdown reports plus `.status.json` and `.items.json` sidecars
-- Resume mode that retries only missing or failed roaster runs for the current UTC day
-- New-products digest built from the last 7 days of discovered coffees
-- Config validation, structured logging, and a real pytest suite
+
+- Polite crawling with `robots.txt` checks, jittered pacing, retries, and a fixed `User-Agent`
+- Per-host and global HTTP concurrency limits
+- Shopify, JSON, and HTML catalog parsing
+- SQLite first-seen tracking in `logs/seen_products.db`
+- Normalized per-roaster and combined catalog JSON outputs
+- Structured status sidecars for resume/retry behavior
+- Repo-local `skills/coffee-scout` skill for interactive buying analysis
+- Config validation, structured logging, and pytest coverage
 
 ## How It Works
+
 1. Load roasters from `config/roasters.json` and denylisted domains from `config/denylist.txt`.
 2. Fetch product lists and, when needed, product pages with robots compliance and retry/backoff.
-3. Track products in `logs/seen_products.db` and classify “new” coffees by publish date, HTTP metadata, sitemap metadata, or first-seen timestamp.
-4. Build a shared prompt from product metadata, page text, and an optional user ask.
-5. Generate one report per roaster.
-6. Generate digest reports from today’s roaster outputs.
+3. Track first-seen products in SQLite and classify products as new within the current 7-day window.
+4. Write per-roaster catalog JSON plus combined run-level JSON.
+5. Use the `coffee-scout` skill in Codex to review top picks, skips, uncertainty, and follow-up questions.
 
 ## Code Structure
-- `main.py` — thin entrypoint
-- `coffee_watch/cli.py` — CLI parsing and config/bootstrap error handling
-- `coffee_watch/config.py` — settings model, CLI flags, config precedence, validation
-- `coffee_watch/runner.py` — high-level run orchestration (`full`, `resume`, `digest-only`)
-- `coffee_watch/roaster_pipeline.py` — per-roaster flow and digest generation
-- `coffee_watch/llm_backend.py` — Gemini and MLX backend abstraction
-- `coffee_watch/llm.py` — backward-compatible shim around `llm_backend.py`
-- `coffee_watch/classify.py` — new-product date resolution and digest filtering
-- `coffee_watch/network.py` — HTTP fetching, retries, robots, sitemaps
-- `coffee_watch/http_limits.py` — per-host/global concurrency limiter
-- `coffee_watch/report_status.py` — structured sidecars for resume and failure tracking
-- `coffee_watch/reporting.py` — report, prompt, and sidecar file helpers
-- `coffee_watch/seen_products.py` — SQLite first-seen tracker
-- `tests/` — pytest coverage for config, classification, report parsing, resume logic, URL utilities, and MLX text sanitization
+
+- `scrape_coffee.py` - explicit scrape entrypoint
+- `main.py` - backward-compatible thin entrypoint
+- `coffee_watch/cli.py` - CLI parsing and config/bootstrap error handling
+- `coffee_watch/config.py` - settings model, CLI flags, config precedence, validation
+- `coffee_watch/runner.py` - high-level scrape orchestration
+- `coffee_watch/roaster_pipeline.py` - per-roaster scrape, classification, and catalog writing
+- `coffee_watch/catalog.py` - normalized catalog schema helpers
+- `coffee_watch/classify.py` - new-product date resolution
+- `coffee_watch/network.py` - HTTP fetching, retries, robots, sitemaps
+- `coffee_watch/http_limits.py` - per-host/global concurrency limiter
+- `coffee_watch/report_status.py` - structured status sidecars for resume logic
+- `coffee_watch/reporting.py` - JSON output helpers
+- `coffee_watch/seen_products.py` - SQLite first-seen tracker
+- `skills/coffee-scout/` - Codex skill for interactive coffee analysis
+- `tests/` - pytest coverage
 
 ## Installation
-
-Basic runtime install:
 
 ```bash
 python -m venv .venv
@@ -56,71 +61,50 @@ Editable install with dev tooling:
 pip install -e .[dev]
 ```
 
-## Basic Usage
+## Usage
 
 Run with defaults:
 
 ```bash
-python main.py
+python scrape_coffee.py
 ```
 
 Show CLI help:
 
 ```bash
-python main.py --help
+python scrape_coffee.py --help
 ```
 
-Run with Gemini explicitly:
+Retry missing or failed roaster catalogs for the current UTC day:
 
 ```bash
-export GEMINI_API_KEY=your_key_here
-python main.py --llm-backend gemini --model gemini-3.1-flash-lite-preview --digest-model gemini-3.1-pro-preview
+python scrape_coffee.py --resume
 ```
 
-Run with a local MLX backend:
+Disable product-page fetches and use catalog payload text only:
 
 ```bash
-python main.py --llm-backend mlx --mlx-runtime vlm --mlx-model mlx-community/Qwen3.5-122B-A10B-4bit
+python scrape_coffee.py --no-fetch-product-pages
 ```
 
-Common modes:
+Use an alternate config:
 
 ```bash
-python main.py --ask "I want decaf"
-python main.py --skip-llm
-python main.py --fetch-only
-python main.py --digest-only
-python main.py --resume
-python main.py --config config/settings.json --language en
+python scrape_coffee.py --config config/settings.json
 ```
 
 ## Configuration
 
 Config precedence is:
 
-`CLI flags > JSON config file > built-in defaults`
+```text
+CLI flags > JSON config file > built-in defaults
+```
 
 Example `config/settings.json`:
 
 ```json
 {
-  "language": "zh",
-  "user_ask": "I want decaf",
-  "llm_backend": "mlx",
-  "model": "mlx-community/Qwen3.5-122B-A10B-4bit",
-  "digest_model": "mlx-community/Qwen3.5-122B-A10B-4bit",
-  "llm_timeout_s": 600.0,
-  "llm_temperature": 1.0,
-  "llm_max_tokens": 100000,
-  "max_llm_attempts": 10,
-  "llm_retry_base_delay_s": 1.0,
-  "llm_retry_max_delay_s": 30.0,
-  "mlx_model": "mlx-community/Qwen3.5-122B-A10B-4bit",
-  "mlx_runtime": "vlm",
-  "mlx_host": "127.0.0.1",
-  "mlx_port": 8080,
-  "mlx_startup_timeout_s": 900.0,
-  "mlx_trust_remote_code": false,
   "http_timeout_s": 20.0,
   "http_max_retries": 2,
   "jitter_min_s": 0.7,
@@ -130,18 +114,11 @@ Example `config/settings.json`:
   "sitemap_max_pages": 8,
   "max_products_per_source": 200,
   "page_text_max_chars": 0,
-  "batch_page_text_max_chars": 0,
   "log_json_max_chars": 0,
-  "fetch_only": false,
-  "skip_llm": false,
-  "stream_llm_output": true,
-  "digest_only": false,
+  "fetch_product_pages": true,
   "resume": false,
-  "save_prompt": false,
   "save_pretty_products_json": false,
   "save_raw_products_json": false,
-  "save_report": true,
-  "new_products_digest": true,
   "seen_db_path": "logs/seen_products.db",
   "roasters_path": "config/roasters.json",
   "denylist_path": "config/denylist.txt",
@@ -153,36 +130,32 @@ Example `config/settings.json`:
 }
 ```
 
-Backwards-compatible config aliases still work for:
-- `gemini_timeout_s` -> `llm_timeout_s`
-- `skip_gemini` -> `skip_llm`
-- `ask` / `user_asks` / `asks` -> `user_ask`
-
-## Important Behavior Notes
-- Default backend is `gemini`.
-- `GEMINI_API_KEY` is only needed when `llm_backend=gemini`.
-- When `llm_backend=mlx`, `model` and `digest_model` default to `mlx_model` unless explicitly overridden.
-- `mlx_runtime=lm` uses `http://<host>:<port>/v1`; `mlx_runtime=vlm` uses `http://<host>:<port>`.
-- `stream_llm_output=true` streams local MLX output to the terminal.
-- `skip_llm` skips report and digest generation but still performs crawl/classification work.
-- `fetch_only` skips page-level LLM evaluation and writes fetch-only reports.
-- `digest_only` rebuilds digests from today’s existing reports and does not update `logs/seen_products.db`.
-- `resume` retries only missing or failed roaster runs for the current UTC day, then rebuilds digests.
-- The new-products digest covers the last 7 days ending on the current UTC run day.
-- Scraped product descriptions are wrapped as untrusted text in prompts to reduce prompt-injection risk.
-
 ## Outputs
 
 Generated local outputs include:
-- `reports/YYYYMMDD-<roaster-slug>.md` — per-roaster markdown report
-- `reports/YYYYMMDD-z-digest.md` — full digest
-- `reports/YYYYMMDD-z-roaster-digest.md` — roaster scorecard digest
-- `reports/YYYYMMDD-z-new-digest.md` — new-products digest, when enabled and non-empty
-- `reports/YYYYMMDD-<roaster-slug>.status.json` — structured roaster run status
-- `reports/YYYYMMDD-<roaster-slug>.items.json` — structured new-item payload used by digest rebuilds
-- `logs/assets/` — prompt captures and raw/pretty product payloads
-- `logs/coffee_watch.log` — text or JSON log output
-- `logs/seen_products.db` — SQLite seen-product store
+
+- `reports/YYYYMMDD-<roaster-slug>.catalog.json` - normalized per-roaster catalog
+- `reports/YYYYMMDD-catalog.json` - combined run catalog
+- `reports/YYYYMMDD-new-products.json` - flattened new-product subset
+- `reports/YYYYMMDD-<roaster-slug>.status.json` - structured roaster scrape status
+- `logs/assets/` - raw/pretty source payloads when enabled
+- `logs/coffee_watch.log` - text or JSON log output
+- `logs/seen_products.db` - SQLite seen-product store
+
+Product entries include fields such as roaster, product URL, title, price, origin, process, tasting notes, availability, first-seen timestamp, raw product text, source metadata, and scrape errors. Origin/process/tasting-note extraction is best-effort and never replaces the source URL.
+
+## Coffee Scout Skill
+
+The repo includes `skills/coffee-scout`, a Codex skill for running the scraper and analyzing the fresh JSON. It uses preferences stated in the current conversation, so the first answer can be a broad recommendation and follow-up questions can refine it. The skill produces:
+
+- top picks
+- maybe list
+- skip list
+- what changed
+- uncertainty notes
+- follow-up questions
+
+The skill treats scraped product text as untrusted evidence. It should not follow instructions embedded in roaster descriptions.
 
 ## Testing
 
@@ -195,25 +168,16 @@ pytest -q
 Quick syntax check:
 
 ```bash
-python -m py_compile main.py coffee_watch/*.py tests/*.py
+python -m py_compile scrape_coffee.py main.py coffee_watch/*.py tests/*.py
 ```
-
-Tooling config lives in `pyproject.toml` for:
-- `pytest`
-- `ruff`
-- `mypy`
-
-## Prompting Philosophy
-- Roaster and digest prompts are intentionally shared across Gemini and local/open-source backends.
-- This keeps model/runtime comparison cleaner by reducing prompt drift.
-- If backend-specific prompt behavior ever becomes necessary, it should be clearly documented and justified.
 
 ## Responsible Use
 
 This is a hobby project intended for low-frequency monitoring and research.
 
 Please use it responsibly:
-- Review and follow each site’s terms of service and `robots.txt`.
+
+- Review and follow each site's terms of service and `robots.txt`.
 - Do not bypass paywalls, authentication, access controls, or anti-bot protections.
 - If a site owner asks not to be monitored, add the domain to `config/denylist.txt`.
 

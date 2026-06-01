@@ -5,6 +5,7 @@ import json
 import logging
 import random
 import xml.etree.ElementTree as ET
+from collections import deque
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlsplit
@@ -16,7 +17,11 @@ from .config import Settings
 from .constants import USER_AGENT
 from .http_limits import PerHostLimiter
 from .models import PaginationConfig, ProductCandidate, ProductFieldConfig, RoasterSource
-from .parsing import parse_products_json, parse_products_response
+from .parsing import (
+    parse_products_html_path,
+    parse_products_json,
+    parse_products_response,
+)
 from .reporting import log_products_json_snippet, save_products_json, save_products_json_pretty
 from .text_utils import extract_product_jsonld_text, sanitize_html_to_text
 from .url_utils import build_url_with_params, canonicalize_url, matches_patterns
@@ -86,7 +91,7 @@ async def fetch_text_with_jitter(
         if not should_retry or attempt == max_retries:
             return response
         delay = _retry_delay(attempt, response)
-        sleep_for = random.uniform(0, delay)
+        sleep_for = random.uniform(delay / 2, delay) if delay > 0 else 0.0
         log.warning(
             "Retrying %s in %.2fs after status %s",
             url,
@@ -208,7 +213,10 @@ async def fetch_products_for_roaster(
         content_type = response.headers.get("content-type", "")
         remaining = max_products - len(products)
         page_products: list[ProductCandidate] = []
-        if roaster.products_type == "json" or "json" in content_type.lower():
+        json_branch_taken = (
+            roaster.products_type == "json" or "json" in content_type.lower()
+        )
+        if json_branch_taken:
             json_text = response.text
             raw_path = save_products_json(
                 assets_dir, run_id, roaster, page_index, json_text
@@ -275,14 +283,25 @@ async def fetch_products_for_roaster(
                     roaster.json_items_path,
                 )
         if not page_products:
-            page_products = parse_products_response(
-                response.content,
-                content_type,
-                roaster.base_url,
-                roaster,
-                remaining,
-                log,
-            )
+            if json_branch_taken:
+                # JSON was already attempted above; go straight to HTML to
+                # avoid a redundant second json.loads in parse_products_response.
+                page_products = parse_products_html_path(
+                    response.content,
+                    roaster.base_url,
+                    roaster,
+                    remaining,
+                    log,
+                )
+            else:
+                page_products = parse_products_response(
+                    response.content,
+                    content_type,
+                    roaster.base_url,
+                    roaster,
+                    remaining,
+                    log,
+                )
         if not page_products and stop_on_empty:
             break
         products.extend(page_products)
@@ -337,7 +356,9 @@ async def fetch_product_page_text(
         )
         return "", ""
     html = page_response.text
-    page_text = extract_product_jsonld_text(html, settings.page_text_max_chars)
+    page_text = extract_product_jsonld_text(
+        html, settings.page_text_max_chars, page_url=product.url
+    )
     if not page_text:
         page_text = sanitize_html_to_text(html, settings.page_text_max_chars)
     log.info(
@@ -464,12 +485,12 @@ async def fetch_wix_product_sitemap_lastmods(
         return _parse_sitemap_xml(response.text)
 
     async def _collect(url: str) -> dict[str, str]:
-        queue = [url]
+        queue: deque[str] = deque([url])
         seen: set[str] = set()
         combined: dict[str, str] = {}
         cap = max(1, settings.sitemap_max_pages)
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             if current in seen:
                 continue
             seen.add(current)

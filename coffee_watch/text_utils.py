@@ -220,42 +220,82 @@ def _extract_offer_details(offers: object) -> dict[str, str]:
     }
 
 
-def extract_product_jsonld_text(html: str, max_chars: int) -> str:
+def _format_jsonld_product(product: dict, max_chars: int) -> str:
+    parts: list[str] = []
+    name = str(product.get("name") or "").strip()
+    if name:
+        parts.append(f"Name: {name}")
+    description = str(product.get("description") or "").strip()
+    if description:
+        parts.append(f"Description: {description}")
+    brand = product.get("brand")
+    if isinstance(brand, dict):
+        brand = brand.get("name")
+    if brand:
+        parts.append(f"Brand: {brand}")
+    sku = str(product.get("sku") or "").strip()
+    if sku:
+        parts.append(f"SKU: {sku}")
+    category = product.get("category")
+    if category:
+        parts.append(f"Category: {category}")
+    offers = product.get("offers")
+    offer_details = _extract_offer_details(offers)
+    price = offer_details.get("price", "")
+    currency = offer_details.get("currency", "")
+    availability = offer_details.get("availability", "")
+    if price:
+        parts.append(f"Price: {price}{(' ' + currency) if currency else ''}")
+    if availability:
+        parts.append(f"Availability: {availability}")
+    text = " | ".join(parts).strip()
+    if not text:
+        return ""
+    return text if max_chars <= 0 else text[:max_chars]
+
+
+def _normalize_url_for_compare(url: str) -> str:
+    if not url:
+        return ""
+    cleaned = url.strip()
+    if not cleaned:
+        return ""
+    cleaned = cleaned.split("#", 1)[0]
+    cleaned = cleaned.split("?", 1)[0]
+    return cleaned.rstrip("/").lower()
+
+
+def extract_product_jsonld_text(
+    html: str, max_chars: int, page_url: str = ""
+) -> str:
+    """Extract product description text from JSON-LD ``Product`` blocks.
+
+    When ``page_url`` is provided, prefer the JSON-LD product whose ``url`` /
+    ``@id`` matches the page URL (after stripping query/fragment). This avoids
+    surfacing unrelated upsell products from breadcrumbs or related-items
+    JSON-LD blocks. Falls back to the first valid product otherwise.
+    """
+    candidates: list[dict] = []
     for obj in _iter_jsonld_objects(html):
         product = _find_product_in_jsonld(obj)
-        if not product:
-            continue
-        parts: list[str] = []
-        name = str(product.get("name") or "").strip()
-        if name:
-            parts.append(f"Name: {name}")
-        description = str(product.get("description") or "").strip()
-        if description:
-            parts.append(f"Description: {description}")
-        brand = product.get("brand")
-        if isinstance(brand, dict):
-            brand = brand.get("name")
-        if brand:
-            parts.append(f"Brand: {brand}")
-        sku = str(product.get("sku") or "").strip()
-        if sku:
-            parts.append(f"SKU: {sku}")
-        category = product.get("category")
-        if category:
-            parts.append(f"Category: {category}")
-        offers = product.get("offers")
-        offer_details = _extract_offer_details(offers)
-        price = offer_details.get("price", "")
-        currency = offer_details.get("currency", "")
-        availability = offer_details.get("availability", "")
-        if price:
-            parts.append(f"Price: {price}{(' ' + currency) if currency else ''}")
-        if availability:
-            parts.append(f"Availability: {availability}")
-        text = " | ".join(parts).strip()
-        if not text:
-            continue
-        return text if max_chars <= 0 else text[:max_chars]
+        if product:
+            candidates.append(product)
+    if not candidates:
+        return ""
+
+    target = _normalize_url_for_compare(page_url)
+    if target:
+        for product in candidates:
+            for key in ("url", "@id"):
+                if _normalize_url_for_compare(str(product.get(key) or "")) == target:
+                    text = _format_jsonld_product(product, max_chars)
+                    if text:
+                        return text
+
+    for product in candidates:
+        text = _format_jsonld_product(product, max_chars)
+        if text:
+            return text
     return ""
 
 

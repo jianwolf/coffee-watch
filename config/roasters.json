@@ -107,6 +107,12 @@
     "products_path": "/shop",
     "products_type": "html",
     "products_parser": "wix_shop",
+    "products_headers": {
+      "Accept-Encoding": "identity"
+    },
+    "product_page_headers": {
+      "Accept-Encoding": "identity"
+    },
     "product_link_patterns": [
       "/product-page/"
     ],
