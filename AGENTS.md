@@ -5,7 +5,9 @@
 - The core app is intentionally model-free: it scrapes roaster catalogs into normalized JSON, then a Codex skill performs interactive coffee analysis.
 - The system is designed to be run by Codex: the user asks Codex to run `skills/coffee-scout/`, Codex runs the scraper, writes digest markdown files, and then gives an interactive buying report.
 - The real consumer context is a home purchase session that often ends with one roaster and about two bags, but that is an eventual shopping constraint, not the report structure.
-- Coffee reports should feel like ranked scouting menus, not checkout verdicts. Do not force every roaster section into a two-bag bundle or cap a roaster at two coffees; list all highlight-worthy coffees first, sorted within each roaster, then let follow-up preferences narrow the choice.
+- Coffee reports should feel like ranked scouting menus, not checkout verdicts. Do not force every roaster section into a two-bag bundle or cap a roaster at two coffees, but also do not list every highlight-worthy coffee; filter to the strongest options, sorted within each selected roaster, then let follow-up preferences narrow the choice.
+- Avoid information overload in the final Codex report. It should usually focus on about five strongest roasters and at most five coffees per selected roaster, with brief near misses for plausible excluded contenders.
+- Do not pick the five roasters mechanically by score if that creates redundant recommendations; balance trophy, clean floral, experimental fruit-forward, learning/value, and stated preference routes.
 
 ## Project Structure & Module Organization
 - Source code lives in `coffee_watch/`.

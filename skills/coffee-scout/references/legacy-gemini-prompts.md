@@ -209,9 +209,11 @@ Synthesize the all-roaster digest, roaster scorecard digest, and new-product dig
 Write a detailed recommendation report that helps the user continue the conversation.
 Respect the practical context that the user may eventually buy from one roaster and choose two bags per session, but treat that as the eventual shopping constraint, not the report structure.
 Do not prematurely choose the roaster or the exact two bags for the user.
-Do not collapse the answer into a single terse result. For every roaster with meaningful promise, list and rank all coffees worth highlighting, not just two. Explain what each roaster is currently best for and how the user might narrow the list later.
-Provide broad, useful scouting information first: roaster-by-roaster highlight menus, preference-based groupings, and individual standout coffees. Two-bag combinations are allowed as examples only after the broader menu is visible.
-Do not make every roaster section a forced two-bag bundle, and do not cap a roaster at two coffees just because the eventual purchase may be two bags.
+Do not collapse the answer into a single terse result, but also do not overwhelm the user by listing every plausible roaster or every interesting coffee.
+Default to about five strongest roasters and at most five highlighted coffees per selected roaster. Each selected roaster and coffee must earn its place with clear evidence and a buying reason. Do not choose the five roasters mechanically by score if that creates redundant recommendations; balance high-ceiling trophy coffees, clean floral coffees, experimental/fruit-forward coffees, learning/value options, and any stated user preference.
+Provide focused scouting information first: a ranked roaster shortlist, short roaster-by-roaster menus, preference-based groupings, and a brief near-miss section for plausible contenders that did not make the main shortlist.
+Two-bag combinations are allowed as examples only after the focused menu is visible.
+Do not make every roaster section a forced two-bag bundle, and do not cap a roaster at two coffees just because the eventual purchase may be two bags. The normal cap is instead an anti-overload cap of about five coffees per selected roaster.
 Do not use "final choice", "primary purchase path", "my conclusion", or similar language that implies Codex has already selected the roaster or exact checkout.
 End by inviting follow-up preferences or questions. The final line must be exactly: 你这次有什么品味偏好或问题？
 Do not invent facts; cite product URLs and mark scrape uncertainty.
