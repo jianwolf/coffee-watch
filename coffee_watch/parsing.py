@@ -238,6 +238,9 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
             page_text_stop_phrases=to_str_tuple(
                 entry.get("page_text_stop_phrases"), (), fallback_on_empty=False
             ),
+            verify_variant_pages=bool_from_config(
+                entry.get("verify_variant_pages"), default=False
+            ),
             include_tags=to_str_tuple(
                 entry.get("include_tags"), (), fallback_on_empty=False
             ),

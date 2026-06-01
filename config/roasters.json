@@ -79,6 +79,7 @@
       "limit": "250"
     },
     "product_url_template": "https://drinkpassenger.com/products/{handle}",
+    "verify_variant_pages": true,
     "platform": "shopify"
   },
   {

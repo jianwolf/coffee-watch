@@ -14,14 +14,6 @@ def _clean(value: str) -> str:
     return " ".join(str(value or "").split())
 
 
-def _first_present(*values: str) -> str:
-    for value in values:
-        cleaned = _clean(value)
-        if cleaned:
-            return cleaned
-    return ""
-
-
 def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str:
     if not text:
         return ""
@@ -70,6 +62,71 @@ def _variant_to_dict(variant: VariantInfo) -> dict[str, Any]:
     }
 
 
+def _normalize_variant_title(title: str) -> str:
+    return re.sub(r"\s+", "", title.strip().lower())
+
+
+def _variant_sort_key(variant: VariantInfo) -> tuple[int, int, str]:
+    if variant.grams > 0:
+        return (0, variant.grams, variant.title)
+    return (1, 0, variant.title)
+
+
+def _preferred_price_variant(
+    product: ProductCandidate,
+) -> tuple[Optional[VariantInfo], str]:
+    if not product.variants:
+        return None, ""
+    variants = [variant for variant in product.variants if variant.available]
+    if not variants:
+        variants = list(product.variants)
+
+    visible_titles = {
+        _normalize_variant_title(title)
+        for title in product.visible_variant_titles
+        if title
+    }
+    if visible_titles:
+        visible_variants = [
+            variant
+            for variant in variants
+            if _normalize_variant_title(variant.title) in visible_titles
+        ]
+        if visible_variants:
+            return (
+                sorted(visible_variants, key=_variant_sort_key)[0],
+                "visible_variant",
+            )
+
+    return sorted(variants, key=_variant_sort_key)[0], "variant"
+
+
+def _money_label(price: str) -> str:
+    if price.startswith("$"):
+        return price
+    return f"${price}"
+
+
+def _price_label(price: str, price_variant: str) -> str:
+    if price and price_variant:
+        return f"{price_variant} = {_money_label(price)}"
+    if price:
+        return _money_label(price)
+    return ""
+
+
+def _display_price(product: ProductCandidate) -> tuple[str, str, str, str]:
+    variant, source = _preferred_price_variant(product)
+    if variant is not None:
+        price = _clean(variant.price)
+        price_variant = _clean(variant.title)
+        return price, price_variant, _price_label(price, price_variant), source
+    list_price = _clean(product.list_price)
+    if list_price:
+        return list_price, "", _price_label(list_price, ""), "list_price"
+    return "", "", "", ""
+
+
 def _availability(product: ProductCandidate) -> str:
     if not product.variants:
         return "unknown"
@@ -99,22 +156,24 @@ def catalog_product_from_candidate(
         raw_product_text,
         ("origin", "country", "region", "farm", "producer"),
     )
+    price, price_variant, price_label, price_source = _display_price(product)
     return {
         "roaster": roaster.name,
         "platform": roaster.platform,
         "product_id": product.product_id,
         "product_url": product.url,
         "title": product.name,
-        "price": _first_present(
-            product.list_price,
-            *(variant.price for variant in product.variants),
-        ),
+        "price": price,
+        "price_variant": price_variant,
+        "price_label": price_label,
+        "price_source": price_source,
         "badge": product.list_badge,
         "origin": origin,
         "process": process,
         "tasting_notes": _extract_tasting_notes(raw_product_text),
         "availability": _availability(product),
         "variants": [_variant_to_dict(variant) for variant in product.variants],
+        "visible_variant_titles": list(product.visible_variant_titles),
         "first_seen_at": first_seen_at,
         "is_new": is_new,
         "date_source": date_source,

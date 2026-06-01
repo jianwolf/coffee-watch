@@ -150,6 +150,8 @@ Example `config/settings.json`:
 }
 ```
 
+Per-roaster configs can set `verify_variant_pages: true` when a storefront hides sample, wholesale, or business-only variants from the product page even though they still appear in the catalog API. When enabled, Coffee Watch fetches product pages for that roaster and uses the visible size buttons to choose the displayed buyable price label.
+
 ## Outputs
 
 Generated local outputs include:
@@ -166,7 +168,7 @@ Generated local outputs include:
 - `logs/coffee_watch.log` - text or JSON log output
 - `logs/seen_products.db` - SQLite seen-product store
 
-Product entries include fields such as roaster, product URL, title, price, origin, process, tasting notes, availability, first-seen timestamp, raw product text, source metadata, and scrape errors. Origin/process/tasting-note extraction is best-effort and never replaces the source URL.
+Product entries include fields such as roaster, product URL, title, selected buyable price label, selected price variant, all variants, storefront-visible variant titles when verified, origin, process, tasting notes, availability, first-seen timestamp, raw product text, source metadata, and scrape errors. Origin/process/tasting-note extraction is best-effort and never replaces the source URL.
 
 ## Coffee Scout Skill
 

@@ -25,6 +25,7 @@ class RoasterSource:
     pagination: Optional["PaginationConfig"] = None
     max_products: Optional[int] = None
     page_text_stop_phrases: tuple[str, ...] = ()
+    verify_variant_pages: bool = False
     include_tags: tuple[str, ...] = ()
     exclude_tags: tuple[str, ...] = ()
     include_product_types: tuple[str, ...] = ()
@@ -49,6 +50,7 @@ class ProductCandidate:
     list_badge: str = ""
     body_html: str = ""
     variants: tuple["VariantInfo", ...] = ()
+    visible_variant_titles: tuple[str, ...] = ()
     shopify_updated_at: str = ""
     shopify_published_at: str = ""
 

@@ -72,8 +72,58 @@ class VisibleTextExtractor(HTMLParser):
         return "".join(parts)
 
 
+class ButtonTextParser(HTMLParser):
+    _void_tags = {"br", "hr", "img", "input", "meta", "link", "source"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.buttons: list[str] = []
+        self._button_depth = 0
+        self._button_disabled = False
+        self._text_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        if tag == "button":
+            attrs_dict = dict(attrs)
+            style = str(attrs_dict.get("style", "")).lower().replace(" ", "")
+            class_tokens = str(attrs_dict.get("class", "")).lower().split()
+            self._button_depth += 1
+            if self._button_depth == 1:
+                self._button_disabled = (
+                    "disabled" in attrs_dict
+                    or "hidden" in attrs_dict
+                    or str(attrs_dict.get("aria-disabled", "")).lower() == "true"
+                    or str(attrs_dict.get("aria-hidden", "")).lower() == "true"
+                    or "hidden" in class_tokens
+                    or "display:none" in style
+                    or "visibility:hidden" in style
+                )
+                self._text_parts = []
+        elif self._button_depth > 0 and tag not in self._void_tags:
+            self._button_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._button_depth <= 0:
+            return
+        self._button_depth -= 1
+        if tag == "button" and self._button_depth == 0:
+            text = " ".join(part.strip() for part in self._text_parts if part.strip())
+            if text and not self._button_disabled:
+                self.buttons.append(" ".join(text.split()))
+            self._button_disabled = False
+            self._text_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._button_depth > 0:
+            self._text_parts.append(data)
+
+
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 PHONE_RE = re.compile(r"(?:\+?[\d][\d\s().-]{7,}\d)")
+SIZE_BUTTON_RE = re.compile(
+    r"^\d+(?:\.\d+)?\s*(?:g|gram|grams|kg|oz|lb|lbs|pound|pounds)$",
+    re.IGNORECASE,
+)
 JSONLD_SCRIPT_RE = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL,
@@ -151,6 +201,22 @@ def trim_text_at_phrases(text: str, phrases: tuple[str, ...]) -> str:
     if cut_index is None:
         return text
     return text[:cut_index].rstrip()
+
+
+def extract_size_button_labels(html: str) -> tuple[str, ...]:
+    parser = ButtonTextParser()
+    parser.feed(html)
+    labels: list[str] = []
+    seen: set[str] = set()
+    for button in parser.buttons:
+        if not SIZE_BUTTON_RE.match(button):
+            continue
+        key = button.lower().replace(" ", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        labels.append(button)
+    return tuple(labels)
 
 
 def _iter_jsonld_objects(html: str) -> list[dict]:

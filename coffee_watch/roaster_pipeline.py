@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -22,8 +22,10 @@ from .models import ProductCandidate, RoasterRunStatus, RoasterSource
 from .network import (
     fetch_product_page_text,
     fetch_products_for_roaster,
+    fetch_text_with_jitter,
     fetch_wix_product_sitemap_lastmods,
     merge_headers,
+    robots_allows,
 )
 from .report_status import (
     STATUS_EMPTY,
@@ -34,7 +36,11 @@ from .report_status import (
     write_status_sidecar,
 )
 from .reporting import make_roaster_catalog_path, save_json
-from .text_utils import sanitize_html_to_text, trim_text_at_phrases
+from .text_utils import (
+    extract_size_button_labels,
+    sanitize_html_to_text,
+    trim_text_at_phrases,
+)
 from .url_utils import normalize_base_url
 
 
@@ -170,6 +176,95 @@ async def _fetch_missing_product_pages(
     return http_last_modified_by_url, errors_by_url, page_fetch_count
 
 
+async def _fetch_visible_variant_titles(
+    ctx: RunContext,
+    roaster: RoasterSource,
+    products: list[ProductCandidate],
+) -> tuple[dict[str, tuple[str, ...]], dict[str, list[str]], int]:
+    if not ctx.settings.fetch_product_pages or not roaster.verify_variant_pages:
+        return {}, {}, 0
+
+    products_needing_pages = [
+        product for product in products if product.url and len(product.variants) > 1
+    ]
+    if not products_needing_pages:
+        return {}, {}, 0
+
+    page_headers = merge_headers(
+        {"User-Agent": USER_AGENT},
+        roaster.product_page_headers,
+        ctx.logger,
+        f"{roaster.name} variant page",
+    )
+
+    seen_robots_hosts: set[str] = set()
+    for product in products_needing_pages:
+        parsed = urlsplit(product.url)
+        if not parsed.scheme or not parsed.netloc:
+            continue
+        cache_key = f"{parsed.scheme}://{parsed.netloc}"
+        if cache_key in seen_robots_hosts or cache_key in ctx.robots_cache:
+            continue
+        seen_robots_hosts.add(cache_key)
+        await robots_allows(
+            ctx.http_client,
+            product.url,
+            ctx.settings,
+            ctx.robots_cache,
+            ctx.logger,
+            jitter_multiplier=roaster.jitter_multiplier,
+        )
+
+    async def fetch(product: ProductCandidate) -> tuple[str, tuple[str, ...], str]:
+        allowed = await robots_allows(
+            ctx.http_client,
+            product.url,
+            ctx.settings,
+            ctx.robots_cache,
+            ctx.logger,
+            jitter_multiplier=roaster.jitter_multiplier,
+        )
+        if not allowed:
+            return product.url, (), "robots.txt disallows product page"
+        response = await fetch_text_with_jitter(
+            ctx.http_client,
+            product.url,
+            ctx.settings,
+            ctx.logger,
+            headers=page_headers,
+            limiter=ctx.limiter,
+            jitter_multiplier=roaster.jitter_multiplier,
+        )
+        if response is None:
+            return product.url, (), "variant page request failed"
+        if response.status_code >= 400:
+            return (
+                product.url,
+                (),
+                f"variant page returned status {response.status_code}",
+            )
+        return product.url, extract_size_button_labels(response.text), ""
+
+    titles_by_url: dict[str, tuple[str, ...]] = {}
+    errors_by_url: dict[str, list[str]] = {}
+    results = await asyncio.gather(
+        *(fetch(product) for product in products_needing_pages),
+        return_exceptions=True,
+    )
+    for product, result in zip(products_needing_pages, results):
+        if isinstance(result, BaseException):
+            errors_by_url.setdefault(product.url, []).append(
+                f"variant page fetch raised: {result}"
+            )
+            continue
+        url, titles, error = result
+        if titles:
+            titles_by_url[url] = titles
+        if error:
+            errors_by_url.setdefault(url, []).append(error)
+    return titles_by_url, errors_by_url, len(products_needing_pages)
+
+
 async def _load_wix_lastmods(
     ctx: RunContext,
     roaster: RoasterSource,
@@ -288,6 +383,13 @@ async def _process_roaster_inner(
         errors_by_url,
         page_fetch_count,
     ) = await _fetch_missing_product_pages(ctx, roaster, products, page_text_by_id)
+    (
+        visible_variant_titles_by_url,
+        variant_errors_by_url,
+        variant_page_fetch_count,
+    ) = await _fetch_visible_variant_titles(ctx, roaster, products)
+    for url, errors in variant_errors_by_url.items():
+        errors_by_url.setdefault(url, []).extend(errors)
 
     descriptions_by_url = _build_descriptions_by_url(
         products,
@@ -311,6 +413,9 @@ async def _process_roaster_inner(
 
     catalog_products: list[dict[str, Any]] = []
     for product in products:
+        visible_titles = visible_variant_titles_by_url.get(product.url, ())
+        if visible_titles:
+            product = replace(product, visible_variant_titles=visible_titles)
         first_seen_at = first_seen_by_url.get(product.url, "")
         update_date, date_source = resolve_update_date(
             product,
@@ -351,7 +456,7 @@ async def _process_roaster_inner(
         catalog_path=path.name,
         products_found=len(products),
         new_products=len(new_urls),
-        fetched_pages=page_fetch_count,
+        fetched_pages=page_fetch_count + variant_page_fetch_count,
         platform=roaster.platform,
         classified_by_source=dict(by_source),
         undated=undated,
