@@ -227,6 +227,61 @@ def extract_size_button_labels(html: str) -> tuple[str, ...]:
     return tuple(labels)
 
 
+def _find_json_array_end(text: str, open_index: int) -> int:
+    depth = 0
+    in_string = False
+    escaped = False
+    for idx in range(open_index, len(text)):
+        char = text[idx]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return idx
+    return -1
+
+
+def _extract_bag_size_option_labels(html: str) -> tuple[str, ...]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r'"title"\s*:\s*"[^"]*Bag\s+Size[^"]*"', html, re.IGNORECASE):
+        selections_idx = html.find('"selections"', match.end())
+        if selections_idx == -1:
+            continue
+        array_start = html.find("[", selections_idx)
+        if array_start == -1:
+            continue
+        array_end = _find_json_array_end(html, array_start)
+        if array_end == -1:
+            continue
+        selections_json = html[array_start : array_end + 1]
+        for value_match in re.finditer(r'"value"\s*:\s*"((?:\\.|[^"\\])*)"', selections_json):
+            try:
+                label = json.loads(f'"{value_match.group(1)}"')
+            except json.JSONDecodeError:
+                label = value_match.group(1)
+            label = " ".join(label.split())
+            if not SIZE_VALUE_RE.search(label):
+                continue
+            key = label.lower().replace(" ", "")
+            if key in seen:
+                continue
+            seen.add(key)
+            labels.append(label)
+    return tuple(labels)
+
+
 def _clean_price(value: str) -> str:
     return (
         value.strip()
@@ -246,6 +301,10 @@ def extract_product_page_size_labels(html: str) -> tuple[str, ...]:
     button_labels = extract_size_button_labels(html)
     if button_labels:
         return button_labels
+
+    option_labels = _extract_bag_size_option_labels(html)
+    if option_labels:
+        return option_labels
 
     text = sanitize_html_to_text(html, 0, remove_boilerplate=False)
     labels: list[str] = []

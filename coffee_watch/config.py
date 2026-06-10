@@ -25,6 +25,7 @@ class Settings:
     per_host_concurrency: int
     sitemap_max_pages: int
     max_products_per_source: int
+    new_window_days: int
     page_text_max_chars: int
     log_json_max_chars: int
     fetch_product_pages: bool
@@ -66,6 +67,8 @@ class Settings:
             issues.append("per_host_concurrency must be >= 1")
         if self.sitemap_max_pages < 1:
             issues.append("sitemap_max_pages must be >= 1")
+        if self.new_window_days < 1:
+            issues.append("new_window_days must be >= 1")
         if self.max_products_per_source < 1:
             issues.append("max_products_per_source must be >= 1")
         if self.page_text_max_chars < 0:
@@ -86,6 +89,7 @@ class Settings:
             per_host_concurrency=1,
             sitemap_max_pages=8,
             max_products_per_source=200,
+            new_window_days=7,
             page_text_max_chars=0,
             log_json_max_chars=0,
             fetch_product_pages=True,
@@ -148,6 +152,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--max-products-per-source",
         type=int,
         help="Max products to process per roaster",
+    )
+    parser.add_argument(
+        "--new-window-days",
+        type=int,
+        help="New-product window in days (default 7); raise to match a longer buying cadence, e.g. 30",
     )
     parser.add_argument(
         "--page-text-max-chars",
@@ -296,6 +305,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         max_products_per_source=_as_int(
             "max_products_per_source", pick_value("max_products_per_source")
         ),
+        new_window_days=_as_int("new_window_days", pick_value("new_window_days")),
         page_text_max_chars=_as_int(
             "page_text_max_chars", pick_value("page_text_max_chars")
         ),

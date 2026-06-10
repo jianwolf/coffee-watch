@@ -15,7 +15,6 @@ from .catalog import (
     catalog_product_from_candidate,
 )
 from .classify import (
-    NEW_PRODUCTS_WINDOW_DAYS,
     classify_new_products,
     log_new_products_summary,
     resolve_update_date,
@@ -131,18 +130,24 @@ async def _fetch_missing_product_pages(
     roaster: RoasterSource,
     products: list[ProductCandidate],
     page_text_by_id: dict[str, str],
-) -> tuple[dict[str, str], dict[str, list[str]], int]:
+) -> tuple[
+    dict[str, str],
+    dict[str, list[str]],
+    dict[str, str],
+    dict[str, tuple[str, ...]],
+    int,
+]:
     if not ctx.settings.fetch_product_pages:
         ctx.logger.info(
             "Product page fetching disabled for %s; using catalog text only.",
             roaster.name,
         )
-        return {}, {}, 0
+        return {}, {}, {}, {}, 0
     if roaster.platform == "shopify":
         ctx.logger.info(
             "Skipping product page fetches for %s (platform shopify).", roaster.name
         )
-        return {}, {}, 0
+        return {}, {}, {}, {}, 0
 
     page_headers = merge_headers(
         {"User-Agent": USER_AGENT},
@@ -153,9 +158,11 @@ async def _fetch_missing_product_pages(
     products_needing_pages = [product for product in products if not product.body_html]
     page_fetch_count = len(products_needing_pages)
     http_last_modified_by_url: dict[str, str] = {}
+    page_price_by_url: dict[str, str] = {}
+    page_visible_titles_by_url: dict[str, tuple[str, ...]] = {}
     errors_by_url: dict[str, list[str]] = {}
     if not products_needing_pages:
-        return http_last_modified_by_url, errors_by_url, 0
+        return http_last_modified_by_url, errors_by_url, {}, {}, 0
 
     page_tasks = [
         fetch_product_page_text(
@@ -177,13 +184,23 @@ async def _fetch_missing_product_pages(
             ctx.logger.warning("Page text fetch raised for %s: %s", product.url, result)
             errors_by_url.setdefault(product.url, []).append(message)
             continue
-        text, last_modified = result
+        text, last_modified, page_price, visible_titles = result
         page_text_by_id[product.product_id] = trim_text_at_phrases(
             text, roaster.page_text_stop_phrases
         )
         if last_modified:
             http_last_modified_by_url[product.url] = last_modified
-    return http_last_modified_by_url, errors_by_url, page_fetch_count
+        if page_price:
+            page_price_by_url[product.url] = page_price
+        if visible_titles:
+            page_visible_titles_by_url[product.url] = visible_titles
+    return (
+        http_last_modified_by_url,
+        errors_by_url,
+        page_price_by_url,
+        page_visible_titles_by_url,
+        page_fetch_count,
+    )
 
 
 async def _fetch_storefront_product_pages(
@@ -508,6 +525,8 @@ async def _process_roaster_inner(
     (
         http_last_modified_by_url,
         errors_by_url,
+        page_price_by_url,
+        page_visible_titles_by_url,
         page_fetch_count,
     ) = await _fetch_missing_product_pages(ctx, roaster, products, page_text_by_id)
     (
@@ -546,7 +565,7 @@ async def _process_roaster_inner(
         http_last_modified_by_url,
         wix_lastmod_by_url,
         roaster.platform,
-        window_days=NEW_PRODUCTS_WINDOW_DAYS,
+        window_days=settings.new_window_days,
         persist_seen=True,
     )
     first_seen_by_url = ctx.seen_products.first_seen_for_urls(
@@ -555,8 +574,14 @@ async def _process_roaster_inner(
 
     catalog_products: list[dict[str, Any]] = []
     for product in products:
-        visible_titles = visible_variant_titles_by_url.get(product.url, ())
-        page_price = storefront_price_by_url.get(product.url, "")
+        visible_titles = (
+            visible_variant_titles_by_url.get(product.url)
+            or page_visible_titles_by_url.get(product.url, ())
+        )
+        page_price = (
+            storefront_price_by_url.get(product.url)
+            or page_price_by_url.get(product.url, "")
+        )
         storefront_status = storefront_status_by_url.get(product.url, "")
         if visible_titles or page_price or storefront_status:
             product = _with_storefront_purchase_details(
@@ -596,6 +621,7 @@ async def _process_roaster_inner(
         undated,
         outside_window,
         page_fetch_count,
+        window_days=settings.new_window_days,
     )
     status = RoasterRunStatus(
         roaster=roaster.name,

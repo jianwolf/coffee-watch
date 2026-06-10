@@ -9,6 +9,9 @@ from .models import ProductCandidate, RoasterRunStatus, RoasterSource, VariantIn
 
 SCHEMA_VERSION = 1
 STOREFRONT_UNAVAILABLE_STATUS = "storefront_unavailable"
+# Sanity bounds for trusting Shopify API grams on placeholder-titled variants.
+_API_GRAMS_MIN = 20
+_API_GRAMS_MAX = 10000
 
 
 def _clean(value: str) -> str:
@@ -188,15 +191,24 @@ def _price_label(price: str, price_variant: str) -> str:
     return ""
 
 
+def _api_grams_size(variant: VariantInfo) -> str:
+    if _API_GRAMS_MIN <= variant.grams <= _API_GRAMS_MAX:
+        return f"{variant.grams} g"
+    return ""
+
+
 def _display_price(product: ProductCandidate) -> tuple[str, str, str, str]:
     if product.storefront_status == STOREFRONT_UNAVAILABLE_STATUS:
         return "", "", "", STOREFRONT_UNAVAILABLE_STATUS
     variant, source = _preferred_price_variant(product)
     if variant is not None:
         price = _clean(variant.price)
-        price_variant = (
-            "" if _is_default_variant_title(variant.title) else _clean(variant.title)
-        )
+        if _is_default_variant_title(variant.title):
+            price_variant = _api_grams_size(variant)
+            if price_variant:
+                source = "variant_api_grams"
+        else:
+            price_variant = _clean(variant.title)
         return price, price_variant, _price_label(price, price_variant), source
     list_price = _clean(product.list_price)
     if list_price:

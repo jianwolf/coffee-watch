@@ -4,10 +4,11 @@
 - This repo supports real coffee tracking and serves as a public showcase of crawler, data modeling, and backend engineering skills.
 - The core app is intentionally model-free: it scrapes roaster catalogs into normalized JSON, then a Codex skill performs interactive coffee analysis.
 - The system is designed to be run by Codex: the user asks Codex to run `skills/coffee-scout/`, Codex runs the scraper, writes digest markdown files, and then gives an interactive buying report.
-- The real consumer context is a home purchase session that often ends with one roaster and about two bags, but that is an eventual shopping constraint, not the report structure.
+- The real consumer context is a home purchase session roughly once per month that often ends with one roaster and about two bags, but that cadence and bag count are eventual shopping constraints, not the report structure.
+- The user's end goal is finding the most suitable coffee. Shipping cost and cart economics are not a concern of this repo; do not track, model, or ask about them.
 - Coffee reports should feel like ranked scouting menus, not checkout verdicts. Do not force every roaster section into a two-bag bundle or cap a roaster at two coffees, but also do not list every highlight-worthy coffee; filter to the strongest options, sorted within each selected roaster, then let follow-up preferences narrow the choice.
-- Avoid information overload in the final Codex report. It should usually focus on about five strongest roasters and at most five coffees per selected roaster, with brief near misses for plausible excluded contenders.
-- Do not pick the five roasters mechanically by score if that creates redundant recommendations; balance trophy, clean floral, experimental fruit-forward, learning/value, and stated preference routes.
+- Avoid information overload in the final Codex report. It should usually focus on about ten strongest roasters and at most five coffees per selected roaster, with brief near misses for plausible excluded contenders.
+- Do not pick the ten roasters mechanically by score if that creates redundant recommendations; balance trophy, clean floral, experimental fruit-forward, learning/value, and stated preference routes.
 
 ## Project Structure & Module Organization
 - Source code lives in `coffee_watch/`.
@@ -21,6 +22,7 @@
 - Structured resume state lives in `coffee_watch/report_status.py` and `coffee_watch/reporting.py`.
 - Seen-products tracking lives in `coffee_watch/seen_products.py` (SQLite).
 - The Codex analysis skill lives in `skills/coffee-scout/`.
+- User-curated buying state (standing preferences, watchlist, purchase log with taste verdicts) lives in `purchase-journal.md` at the repo root; the skill reads it every session and may append to it, but must never delete user-written content.
 - Config files are under `config/` (for example `config/roasters.json` and `config/denylist.txt`).
 - Generated outputs go to `reports/` and `logs/`.
 - Tests live under `tests/`.
@@ -34,6 +36,7 @@
 - `python scrape_coffee.py --help` - view CLI flags.
 - `python scrape_coffee.py --resume` - retry missing/failed roaster catalog outputs for today, then rebuild combined catalogs.
 - `python scrape_coffee.py --no-fetch-product-pages` - skip product page fetches and use catalog payload text only.
+- `python scrape_coffee.py --new-window-days 30` - widen the new-product window beyond the 7-day default to match a longer buying cadence.
 - `pytest -q` - run the test suite.
 - `python -m py_compile scrape_coffee.py main.py coffee_watch/*.py tests/*.py` - quick syntax sanity check.
 
@@ -53,7 +56,8 @@
 - The final Codex report should not present a single selected roaster or exact two-bag checkout as the answer. It should open the buying conversation with roaster-by-roaster highlight menus, preference groupings, and narrowing routes.
 - The three digest reports should also avoid becoming rigid two-bag path documents; write them as ranked shortlists, scorecards, caveats, and preference maps.
 - Coffee Scout should persist its markdown analysis artifacts in `reports/` using the fresh catalog date prefix: `YYYYMMDD-z-digest.md`, `YYYYMMDD-z-roaster-digest.md`, `YYYYMMDD-z-new-digest.md`, and `YYYYMMDD-z-codex-report.md`.
-- Coffee Scout reports should use catalog `price_label` where available so prices remain size-aware, for example `250 g = $34.25`. Bare prices are easy to misread when API variants include hidden or mismatched sizes.
+- Coffee Scout reports should use catalog `price_label` where available so prices remain size-aware, for example `250 g = $34.25`. Bare prices are easy to misread when API variants include hidden or mismatched sizes. In the final synthesis, also show $/100g where sizes are known and note consumption fit against the monthly two-bag cadence.
+- Persistent user preferences are allowed only from explicit sources: the current conversation and `purchase-journal.md`. The skill should check journal watchlist items against each fresh catalog, calibrate rankings to recorded taste verdicts, and lead reports with a since-last-session delta (sold out, restocked, price moves, new since last purchase) when history exists.
 - If the user asks about scrape time or web-fetch cost, include a concise timing note in the generated reports: wall-clock elapsed time, major HTTP status counts, and any access-control caveats such as storefront 401s.
 - New-product analysis should distinguish `is_new` evidence from buyable recommendations. New products with `availability != available` or `storefront_status == storefront_unavailable` can be mentioned as excluded caveats, but should not be recommended.
 
@@ -67,6 +71,7 @@
 - When variants differ only by grind choice at the same weight, prefer whole bean, then unspecified grind, then ground/drip/aeropress/etc. Rationale: the user strongly prefers whole bean, and grind variants should not distort the displayed price. Tradeoff: this should stay in deterministic catalog selection, not as extra prompt noise for `skills/coffee-scout/`, unless the user asks for grind-specific buying advice.
 - For non-Shopify HTML/Wix catalog entries with a public product URL and no variant payload, treat the product as available unless storefront evidence or badges such as Sold Out/Out of Stock say otherwise. Also extract visible product-page price and Bag Size text into structured price/variant fields before marking price or size as missing. Rationale: the scrape source is the storefront itself, not an API inventory payload. Tradeoff: availability can be optimistic if a page omits sold-out text, and page-derived options may need parser updates when a store changes labels.
 - Do not display Shopify placeholder variant names such as `Default Title` or `Default Variant` as purchase sizes. Use the bare price and mark size as not captured when relevant. Rationale: `Default Title = $53.00` looks like a real size label but is just Shopify plumbing.
+- When a placeholder-titled variant carries a plausible API `grams` value (20 g to 10 kg), surface it as the size with `price_source=variant_api_grams`, for example `250 g = $56.00`. Reports must mark these sizes as API-reported and route them to pre-checkout verification. Rationale: single-variant stores such as Dayglow expose real weights only via API grams, and a marked size beats no size. Tradeoff: API grams can be stale, so the confidence marker matters; title-parsed weights still win when a title exists.
 
 ## Crawler Concurrency Principles
 - Respect rules before speed: keep `robots.txt` checks, the fixed project `User-Agent`, retry/backoff behavior, jitter, denylist support, and access-control boundaries intact.

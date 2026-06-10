@@ -226,6 +226,59 @@ def test_catalog_product_omits_default_title_from_price_label():
     assert item["price_source"] == "variant"
 
 
+def test_catalog_product_uses_api_grams_for_default_title_variant():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Guest Roaster Coffee",
+        url="https://example.com/products/guest-roaster",
+        source="R",
+        variants=(VariantInfo("Default Title", "56.00", 250, True),),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="shopify"),
+        raw_product_text="Tasting notes: lychee, jasmine.",
+        first_seen_at="2026-06-09T00:00:00+00:00",
+        is_new=False,
+        date_source="shopify_published_at",
+        update_date=date(2026, 6, 9),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["price"] == "56.00"
+    assert item["price_variant"] == "250 g"
+    assert item["price_label"] == "250 g = $56.00"
+    assert item["price_source"] == "variant_api_grams"
+
+
+def test_catalog_product_ignores_implausible_api_grams_on_default_title():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Odd Grams Coffee",
+        url="https://example.com/products/odd-grams",
+        source="R",
+        variants=(VariantInfo("Default Title", "24.00", 5, True),),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="shopify"),
+        raw_product_text="Tasting notes: cherry.",
+        first_seen_at="2026-06-09T00:00:00+00:00",
+        is_new=False,
+        date_source="shopify_published_at",
+        update_date=date(2026, 6, 9),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["price_variant"] == ""
+    assert item["price_label"] == "$24.00"
+    assert item["price_source"] == "variant"
+
+
 def test_catalog_product_does_not_price_storefront_unavailable_product():
     product = ProductCandidate(
         product_id="p1",

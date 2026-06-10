@@ -23,7 +23,12 @@ from .parsing import (
     parse_products_response,
 )
 from .reporting import log_products_json_snippet, save_products_json, save_products_json_pretty
-from .text_utils import extract_product_jsonld_text, sanitize_html_to_text
+from .text_utils import (
+    extract_product_page_price,
+    extract_product_page_size_labels,
+    extract_product_jsonld_text,
+    sanitize_html_to_text,
+)
 from .url_utils import build_url_with_params, canonicalize_url, matches_patterns
 
 logger = logging.getLogger(__name__)
@@ -323,7 +328,7 @@ async def fetch_product_page_text(
     headers: dict[str, str],
     limiter: Optional[PerHostLimiter],
     jitter_multiplier: float = 1.0,
-) -> tuple[str, str]:
+) -> tuple[str, str, str, tuple[str, ...]]:
     product_allowed = await robots_allows(
         http_client,
         product.url,
@@ -338,7 +343,7 @@ async def fetch_product_page_text(
             "Robots.txt disallows product page %s; skipping page fetch.",
             product.url,
         )
-        return "", ""
+        return "", "", "", ()
 
     page_response = await fetch_text_with_jitter(
         http_client,
@@ -351,14 +356,14 @@ async def fetch_product_page_text(
     )
     if page_response is None:
         log.warning("Request failed for product page %s", product.url)
-        return "", ""
+        return "", "", "", ()
     if page_response.status_code >= 400:
         log.warning(
             "Non-200 response %s for product page %s",
             page_response.status_code,
             product.url,
         )
-        return "", ""
+        return "", "", "", ()
     html = page_response.text
     page_text = extract_product_jsonld_text(
         html, settings.page_text_max_chars, page_url=product.url
@@ -369,7 +374,12 @@ async def fetch_product_page_text(
         "Sanitized %s chars of page text for %s", len(page_text), product.url
     )
     http_last_modified = page_response.headers.get("last-modified", "")
-    return page_text, http_last_modified
+    return (
+        page_text,
+        http_last_modified,
+        extract_product_page_price(html),
+        extract_product_page_size_labels(html),
+    )
 
 
 def _strip_xml_namespace(tag: str) -> str:

@@ -79,6 +79,21 @@ def test_extract_product_page_size_labels_reads_wix_bag_size_text():
     assert extract_product_page_size_labels(html) == ("100g",)
 
 
+def test_extract_product_page_size_labels_reads_wix_option_json():
+    html = """
+    <script>
+      {"title":"Select Bag Size","optionType":"DROP_DOWN","key":"Select Bag Size",
+       "selections":[
+         {"id":9,"value":"sample (40-50g)","linkedMediaItems":[]},
+         {"id":10,"value":"100g","linkedMediaItems":[]}
+       ]},
+      {"title":"Profile","selections":[{"value":"Light"}]}
+    </script>
+    """
+
+    assert extract_product_page_size_labels(html) == ("sample (40-50g)", "100g")
+
+
 def test_grams_from_size_label_converts_common_formats():
     assert grams_from_size_label("100g") == 100
     assert grams_from_size_label("4 oz") == 113

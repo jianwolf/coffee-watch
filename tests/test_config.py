@@ -33,6 +33,17 @@ def test_cli_overrides_config_and_defaults():
     assert settings.http_concurrency == 3
 
 
+def test_new_window_days_default_and_override():
+    assert build_settings(_args(), {}).new_window_days == 7
+    assert build_settings(_args(new_window_days=30), {}).new_window_days == 30
+    assert build_settings(_args(), {"new_window_days": 14}).new_window_days == 14
+
+
+def test_invalid_new_window_days_raises():
+    with pytest.raises(ConfigError, match="new_window_days"):
+        build_settings(_args(new_window_days=0), {})
+
+
 def test_config_alias_for_output_dir():
     settings = build_settings(_args(), {"output_dir": "out"})
     assert str(settings.reports_dir) == "out"

@@ -105,6 +105,12 @@ Disable product-page fetches and use catalog payload text only:
 python scrape_coffee.py --no-fetch-product-pages
 ```
 
+Widen the new-product window (default 7 days) to match a longer buying cadence:
+
+```bash
+python scrape_coffee.py --new-window-days 30
+```
+
 Use an alternate config:
 
 ```bash
@@ -133,6 +139,7 @@ Example `config/settings.json`:
   "per_host_concurrency": 1,
   "sitemap_max_pages": 8,
   "max_products_per_source": 200,
+  "new_window_days": 7,
   "page_text_max_chars": 0,
   "log_json_max_chars": 0,
   "fetch_product_pages": true,

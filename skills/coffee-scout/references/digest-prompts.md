@@ -25,6 +25,7 @@ User ask:
 - {user_ask}
 
 Use this ask to steer the recommendations.
+Standing preferences and taste verdicts from `purchase-journal.md` count as part of the ask; current-conversation statements override them on conflict.
 Prefer coffees that satisfy it when the provided evidence supports it.
 If no coffee is a strong match, say so explicitly and explain the closest fit.
 If the user asks about scrape timing or web-fetch cost, include a concise timing/status note using observed runtime and HTTP status evidence.
@@ -219,8 +220,14 @@ Write a detailed recommendation report that helps the user continue the conversa
 Respect the practical context that the user may eventually buy from one roaster and choose two bags per session, but treat that as the eventual shopping constraint, not the report structure.
 Do not prematurely choose the roaster or the exact two bags for the user.
 Do not collapse the answer into a single terse result, but also do not overwhelm the user by listing every plausible roaster or every interesting coffee.
-Default to about five strongest roasters and at most five highlighted coffees per selected roaster. Each selected roaster and coffee must earn its place with clear evidence and a buying reason. Do not choose the five roasters mechanically by score if that creates redundant recommendations; balance high-ceiling trophy coffees, clean floral coffees, experimental/fruit-forward coffees, learning/value options, and any stated user preference.
+Default to about ten strongest roasters and at most five highlighted coffees per selected roaster. Each selected roaster and coffee must earn its place with clear evidence and a buying reason. Do not choose the ten roasters mechanically by score if that creates redundant recommendations; balance high-ceiling trophy coffees, clean floral coffees, experimental/fruit-forward coffees, learning/value options, and any stated user preference.
+Open with a 本期速览 of at most three actionable items (urgent buy windows, watchlist hits, or the single strongest fit), then what changed since the last session when history exists: watchlist hits (restocks, sell-outs, price moves), the delta versus the previous catalog, and journal-aware "new since last purchase" highlights.
+Lead each menu row with the coffee's captured tasting notes; competition and lineage evidence supports the pick but must not replace flavor descriptors.
+When showing $/100g, note that per-gram comparison is only meaningful within the same tier; a 100g trophy tin is a different product from a 250g daily bag.
+Roast dates are rarely captured; when freshness matters, point to newly-listed-since-last-session as the best available proxy.
+Calibrate ranking to the purchase journal: lean toward recorded positive verdicts, away from negative ones, and do not re-recommend recent purchases unless the verdict was positive and a repeat is wanted.
 Provide focused scouting information first: a ranked roaster shortlist, short roaster-by-roaster menus, preference-based groupings, and a brief near-miss section for plausible contenders that did not make the main shortlist.
+Show $/100g next to the display price wherever the size is known, and note consumption fit (how long the bags last at roughly two bags per month).
 Two-bag combinations are allowed as examples only after the focused menu is visible.
 Do not make every roaster section a forced two-bag bundle, and do not cap a roaster at two coffees just because the eventual purchase may be two bags. The normal cap is instead an anti-overload cap of about five coffees per selected roaster.
 Do not use "final choice", "primary purchase path", "my conclusion", or similar language that implies Codex has already selected the roaster or exact checkout.
@@ -228,6 +235,7 @@ If scrape runtime or web-fetch cost matters to the user, include a short section
 Use size-aware display prices when available, for example `250 g = $34.25`, so the reader can tell what can actually be bought.
 Do not treat non-Shopify/Wix products from public storefront pages as unavailable merely because they have no Shopify variants. Preserve missing price or bag size as uncertainty instead.
 Do not present Shopify placeholder variant labels such as `Default Title` or `Default Variant` as real sizes; use the bare price and note that size was not captured when it matters.
+Sizes with price_source=variant_api_grams come from the Shopify API weight, not a visible label: show them marked as API-reported (for example `250 g（API 标重）= $56.00`) and list them under pre-checkout verification.
 End by inviting follow-up preferences or questions. The final line must be exactly: 你这次有什么品味偏好或问题？
 Do not invent facts; cite product URLs and mark scrape uncertainty.
 ```
