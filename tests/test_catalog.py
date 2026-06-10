@@ -226,6 +226,84 @@ def test_catalog_product_omits_default_title_from_price_label():
     assert item["price_source"] == "variant"
 
 
+def test_catalog_product_extracts_notes_of_pattern():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Notes Of Coffee",
+        url="https://example.com/products/notes-of",
+        source="R",
+        variants=(VariantInfo("250 g", "48.50", 250, True),),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="shopify"),
+        raw_product_text=(
+            "Costa Rica San Isidro $48.50 Notes of Plum, Orange, Jasmine "
+            "Washed Process Johel established the farm in 2014."
+        ),
+        first_seen_at="2026-06-09T00:00:00+00:00",
+        is_new=False,
+        date_source="shopify_published_at",
+        update_date=date(2026, 6, 9),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["tasting_notes"] == ["Plum", "Orange", "Jasmine"]
+
+
+def test_catalog_product_extracts_profile_of_pattern():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Profile Coffee",
+        url="https://example.com/products/profile-of",
+        source="R",
+        variants=(VariantInfo("100 g", "54.00", 100, True),),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="shopify"),
+        raw_product_text=(
+            "Processed using the traditional washed method, to produce that "
+            "classic profile of citrus, florals, and elegance, that we all expect."
+        ),
+        first_seen_at="2026-06-09T00:00:00+00:00",
+        is_new=False,
+        date_source="shopify_published_at",
+        update_date=date(2026, 6, 9),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["tasting_notes"] == ["citrus", "florals", "elegance"]
+
+
+def test_catalog_product_ignores_single_note_of_phrase():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Story Coffee",
+        url="https://example.com/products/story",
+        source="R",
+        variants=(VariantInfo("250 g", "20.00", 250, True),),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com", platform="shopify"),
+        raw_product_text="He took careful notes of the harvest that season.",
+        first_seen_at="2026-06-09T00:00:00+00:00",
+        is_new=False,
+        date_source="shopify_published_at",
+        update_date=date(2026, 6, 9),
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["tasting_notes"] == []
+
+
 def test_catalog_product_uses_api_grams_for_default_title_variant():
     product = ProductCandidate(
         product_id="p1",

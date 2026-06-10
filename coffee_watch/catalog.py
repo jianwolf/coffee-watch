@@ -77,6 +77,19 @@ def _trim_at_markers(value: str, markers: tuple[str, ...]) -> str:
     return value
 
 
+_NOTES_OF_PATTERN = re.compile(
+    r"\b(?:notes|flavors|flavours|profile)\s+of\s+([^.|;\n]{3,120})",
+    re.IGNORECASE,
+)
+# Trailing process labels that pages append right after an inline notes list.
+_NOTES_TAIL_PATTERN = re.compile(
+    r"\s+(?:(?:washed|natural|honey|wet)\s+process|washed\s+anaerobic|ethyl\s+acetate)\b.*$",
+    re.IGNORECASE,
+)
+# A "notes of" match containing these words is page boilerplate, not flavor.
+_NOTES_BLOCKLIST = ("variety", "processing", "origin", "coffee")
+
+
 def _extract_tasting_notes(text: str) -> list[str]:
     value = _extract_labeled_value(
         text,
@@ -95,7 +108,27 @@ def _extract_tasting_notes(text: str) -> list[str]:
             "tastes like",
         ),
     )
-    return _split_notes(value)
+    notes = _split_notes(value)
+    if notes:
+        return notes
+    match = _NOTES_OF_PATTERN.search(text or "")
+    if match:
+        candidate = _NOTES_TAIL_PATTERN.sub("", match.group(1))
+        notes = []
+        for note in _split_notes(candidate):
+            if note.lower().startswith("and "):
+                note = note[4:]
+            # Real flavor notes are short noun phrases; stop at prose clauses.
+            if len(note) > 32 or re.search(
+                r"\b(?:that|which|we|this|it|its)\b", note, re.IGNORECASE
+            ):
+                break
+            notes.append(note)
+        if 1 < len(notes) <= 6 and not any(
+            blocked in note.lower() for note in notes for blocked in _NOTES_BLOCKLIST
+        ):
+            return notes
+    return []
 
 
 def _variant_to_dict(variant: VariantInfo) -> dict[str, Any]:
