@@ -113,6 +113,7 @@ Use this for the third digest, `z-new-digest`.
 ```text
 You are given a list of newly discovered coffees from the past 7 days across multiple roasters.
 Write a digest of the best new coffees from this 7-day window.
+The is_new flag follows Shopify published_at, which a storewide republish (typically a sale) can bump for many existing items at once. When a previous catalog is available, lead with coffees that are truly first-seen and mention republished items only for their real change (price cut, restock), clearly labeled as republished rather than new.
 Be detailed in your recommendations and reasoning, and explain unfamiliar terms.
 Do not worry about a long report length.
 Include: overall summary, standout coffees and why, any roasters with no strong picks, and final overall recommendations.
