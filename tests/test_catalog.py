@@ -516,3 +516,52 @@ def test_catalog_product_prefers_whole_bean_for_same_weight():
     assert item["price_variant"] == "250g / Whole Bean"
     assert item["price_label"] == "250g / Whole Bean = $24.00"
     assert item["price_source"] == "variant"
+
+
+def test_catalog_product_keeps_existing_currency_symbol_in_price_label():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Kieni",
+        url="https://example.com/products/kieni",
+        source="R",
+        variants=(VariantInfo("250 g", "€18.50", 250, True),),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com"),
+        raw_product_text="",
+        first_seen_at="",
+        is_new=False,
+        date_source="unknown",
+        update_date=None,
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    # A price already carrying a currency marker must not gain a second one.
+    assert item["price_label"] == "250 g = €18.50"
+
+
+def test_catalog_product_labels_bare_numeric_price_as_usd():
+    product = ProductCandidate(
+        product_id="p1",
+        name="Auction Lot",
+        url="https://example.com/products/auction-lot",
+        source="R",
+        variants=(VariantInfo("250 g", "1050.00", 250, True),),
+    )
+    item = catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com"),
+        raw_product_text="",
+        first_seen_at="",
+        is_new=False,
+        date_source="unknown",
+        update_date=None,
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+    assert item["price_label"] == "250 g = $1050.00"

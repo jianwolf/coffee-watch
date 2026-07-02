@@ -3,20 +3,18 @@ from __future__ import annotations
 import json
 import re
 from html.parser import HTMLParser
-from typing import Optional
+from typing import ClassVar
 from urllib.parse import urlsplit
-
-from .models import VariantInfo
 
 
 class LinkParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.links: list[tuple[str, str]] = []
-        self._current_href: Optional[str] = None
+        self._current_href: str | None = None
         self._text_parts: list[str] = []
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag != "a":
             return
         attrs_dict = dict(attrs)
@@ -38,14 +36,16 @@ class LinkParser(HTMLParser):
 
 
 class VisibleTextExtractor(HTMLParser):
-    _skip_tags = {"script", "style", "head", "noscript", "svg", "canvas"}
+    _skip_tags: ClassVar[frozenset[str]] = frozenset(
+        {"script", "style", "head", "noscript", "svg", "canvas"}
+    )
 
     def __init__(self) -> None:
         super().__init__()
         self._skip_depth = 0
         self._chunks: list[str] = []
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self._skip_tags:
             self._skip_depth += 1
         elif tag in {"br", "p", "li", "div", "section"} and self._skip_depth == 0:
@@ -73,7 +73,9 @@ class VisibleTextExtractor(HTMLParser):
 
 
 class ButtonTextParser(HTMLParser):
-    _void_tags = {"br", "hr", "img", "input", "meta", "link", "source"}
+    _void_tags: ClassVar[frozenset[str]] = frozenset(
+        {"br", "hr", "img", "input", "meta", "link", "source"}
+    )
 
     def __init__(self) -> None:
         super().__init__()
@@ -82,7 +84,7 @@ class ButtonTextParser(HTMLParser):
         self._button_disabled = False
         self._text_parts: list[str] = []
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "button":
             attrs_dict = dict(attrs)
             style = str(attrs_dict.get("style", "")).lower().replace(" ", "")
@@ -103,6 +105,11 @@ class ButtonTextParser(HTMLParser):
             self._button_depth += 1
 
     def handle_endtag(self, tag: str) -> None:
+        # handle_starttag never counts void tags, but HTMLParser replays a
+        # self-closing form like <br/> as start+end; counting the end tag
+        # alone would desync the depth and drop the whole button.
+        if tag in self._void_tags:
+            return
         if self._button_depth <= 0:
             return
         self._button_depth -= 1
@@ -129,8 +136,18 @@ SIZE_VALUE_RE = re.compile(
     re.IGNORECASE,
 )
 PRODUCT_PAGE_PRICE_RE = re.compile(
-    r"(?:\$|\\\$|&#36;|&dollar;)\s*\d+(?:\.\d{2})?",
+    r"(?:\$|\\\$|&#36;|&dollar;)\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?",
     re.IGNORECASE,
+)
+# A price whose nearby preceding text matches these markers is a shipping or
+# promo banner ("Free shipping on orders over $50"), not the product price.
+PRICE_CONTEXT_BLOCKLIST = (
+    "shipping",
+    "orders over",
+    "order over",
+    "orders of",
+    "delivery over",
+    "spend",
 )
 JSONLD_SCRIPT_RE = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
@@ -154,12 +171,21 @@ BOILERPLATE_PHRASES = {
 }
 
 
-def sanitize_html_to_text(
-    html: str, max_chars: int, remove_boilerplate: bool = True
-) -> str:
+def extract_visible_text(html: str) -> str:
+    """Run the HTML parse once; finish with :func:`finalize_visible_text`.
+
+    Callers that need several text variants of the same page (description,
+    price, size labels) should extract once and finalize per variant instead
+    of re-parsing the HTML each time.
+    """
     extractor = VisibleTextExtractor()
     extractor.feed(html)
-    raw = extractor.text()
+    return extractor.text()
+
+
+def finalize_visible_text(
+    raw: str, max_chars: int, remove_boilerplate: bool = True
+) -> str:
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     filtered: list[str] = []
     for line in lines:
@@ -170,7 +196,8 @@ def sanitize_html_to_text(
         filtered.append(line)
     text = " ".join(filtered)
     text = " ".join(text.split())
-    text = "".join(ch for ch in text if ch.isprintable())
+    if not text.isprintable():
+        text = "".join(ch for ch in text if ch.isprintable())
     text = EMAIL_RE.sub("[redacted email]", text)
 
     def redact_phone(match: re.Match[str]) -> str:
@@ -185,12 +212,12 @@ def sanitize_html_to_text(
     return text[:max_chars]
 
 
-def sanitize_prompt_field(value: str, max_chars: int) -> str:
-    cleaned = " ".join(value.split())
-    cleaned = "".join(ch for ch in cleaned if ch.isprintable())
-    if max_chars <= 0:
-        return cleaned
-    return cleaned[:max_chars]
+def sanitize_html_to_text(
+    html: str, max_chars: int, remove_boilerplate: bool = True
+) -> str:
+    return finalize_visible_text(
+        extract_visible_text(html), max_chars, remove_boilerplate
+    )
 
 
 def trim_text_at_phrases(text: str, phrases: tuple[str, ...]) -> str:
@@ -288,16 +315,41 @@ def _clean_price(value: str) -> str:
         .replace("&#36;", "$")
         .replace("&dollar;", "$")
         .replace("\\$", "$")
+        # Thousands separators would truncate downstream numeric parsing.
+        .replace(",", "")
     )
 
 
-def extract_product_page_price(html: str) -> str:
-    text = sanitize_html_to_text(html, 0, remove_boilerplate=False)
-    match = PRODUCT_PAGE_PRICE_RE.search(text)
-    return _clean_price(match.group(0)) if match else ""
+def extract_product_page_price(html: str, plain_text: str | None = None) -> str:
+    """Find the first plausible product price in the page's visible text.
+
+    ``plain_text`` lets callers that already hold the sanitized page text
+    (``sanitize_html_to_text(html, 0, remove_boilerplate=False)``) skip a
+    redundant HTML parse.
+
+    Announcement bars render before the product ("Free shipping on orders
+    over $50"), so the first dollar amount on a page is not automatically its
+    price; amounts preceded by banner-style wording are skipped.
+    """
+    text = (
+        plain_text
+        if plain_text is not None
+        else sanitize_html_to_text(html, 0, remove_boilerplate=False)
+    )
+    for match in PRODUCT_PAGE_PRICE_RE.finditer(text):
+        # Banner wording sits immediately before its amount ("orders over
+        # $50"); a tight window avoids also blocking the real price that
+        # follows a short product title.
+        context = text[max(0, match.start() - 20) : match.start()].lower()
+        if any(marker in context for marker in PRICE_CONTEXT_BLOCKLIST):
+            continue
+        return _clean_price(match.group(0))
+    return ""
 
 
-def extract_product_page_size_labels(html: str) -> tuple[str, ...]:
+def extract_product_page_size_labels(
+    html: str, plain_text: str | None = None
+) -> tuple[str, ...]:
     button_labels = extract_size_button_labels(html)
     if button_labels:
         return button_labels
@@ -306,7 +358,11 @@ def extract_product_page_size_labels(html: str) -> tuple[str, ...]:
     if option_labels:
         return option_labels
 
-    text = sanitize_html_to_text(html, 0, remove_boilerplate=False)
+    text = (
+        plain_text
+        if plain_text is not None
+        else sanitize_html_to_text(html, 0, remove_boilerplate=False)
+    )
     labels: list[str] = []
     seen: set[str] = set()
     for label_match in re.finditer(r"\b(?:Bag\s+Size|Size)\*?\b", text, re.IGNORECASE):
@@ -336,7 +392,7 @@ def grams_from_size_label(value: str) -> int:
         grams = amount * 28.349523125
     else:
         grams = amount
-    return int(round(grams))
+    return round(grams)
 
 
 def _iter_jsonld_objects(html: str) -> list[dict]:
@@ -368,7 +424,7 @@ def _normalize_jsonld_type(value: object) -> set[str]:
     return set()
 
 
-def _find_product_in_jsonld(data: dict) -> Optional[dict]:
+def _find_product_in_jsonld(data: dict) -> dict | None:
     types = _normalize_jsonld_type(data.get("@type"))
     if "product" in types or "productgroup" in types:
         return data
@@ -483,23 +539,6 @@ def extract_product_jsonld_text(
         if text:
             return text
     return ""
-
-
-def format_variant_lines(variants: tuple[VariantInfo, ...]) -> list[str]:
-    if not variants:
-        return []
-    lines = ["  variants:"]
-    for variant in variants:
-        parts: list[str] = []
-        if variant.title:
-            parts.append(variant.title)
-        if variant.price:
-            parts.append(f"${variant.price}")
-        if variant.grams:
-            parts.append(f"{variant.grams}g")
-        parts.append("available" if variant.available else "unavailable")
-        lines.append(f"    - {' | '.join(parts)}")
-    return lines
 
 
 def guess_name_from_url(url: str) -> str:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from typing import Callable
+from collections.abc import Callable
 from urllib.parse import urljoin, urlsplit
 
 from .models import ProductCandidate, RoasterSource
@@ -14,7 +14,7 @@ CatalogParser = Callable[
     [str, str, RoasterSource, int, logging.Logger], list[ProductCandidate]
 ]
 
-_PRICE_RE = re.compile(r"(?:\$|\\\$|&#36;|&dollar;)\s*\d+(?:\.\d{2})?")
+_PRICE_RE = re.compile(r"(?:\$|\\\$|&#36;|&dollar;)\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?")
 _BADGE_RE = re.compile(
     r"\b(New Harvest|New|Harvest|Limited|Sold Out|Out of Stock)\b", re.IGNORECASE
 )
@@ -61,7 +61,38 @@ def _extract_price(snippet: str) -> str:
         price.replace("&#36;", "$")
         .replace("&dollar;", "$")
         .replace("\\$", "$")
+        # Thousands separators would truncate downstream numeric parsing.
+        .replace(",", "")
     )
+
+
+def _first_occurrence_index(html: str, needles: set[str]) -> dict[str, int]:
+    """First-occurrence offset of each needle, found in one scan of ``html``.
+
+    Replaces per-needle ``str.find`` calls (O(needles x page size)) with a
+    single alternation pass. Longest-first ordering plus the containment
+    fix-up below keeps results identical to ``str.find`` when one needle is a
+    substring of another (e.g. slug "/p/foo" inside "/p/foo-bar"). Needles
+    absent from the result may still occur in pathological overlaps, so
+    callers should fall back to ``str.find`` for them.
+    """
+    ordered = sorted({needle for needle in needles if needle}, key=len, reverse=True)
+    if not ordered:
+        return {}
+    pattern = re.compile("|".join(re.escape(needle) for needle in ordered))
+    positions: dict[str, int] = {}
+    for match in pattern.finditer(html):
+        text = match.group(0)
+        if text not in positions:
+            positions[text] = match.start()
+    for needle in ordered:
+        for other in ordered:
+            if needle is other or other not in positions or needle not in other:
+                continue
+            candidate = positions[other] + other.index(needle)
+            if needle not in positions or candidate < positions[needle]:
+                positions[needle] = candidate
+    return positions
 
 
 def parse_wix_shop_catalog(
@@ -92,13 +123,17 @@ def parse_wix_shop_catalog(
     products: list[ProductCandidate] = []
     seen: set[str] = set()
     exclude_keywords = {kw.strip().lower() for kw in roaster.exclude_title_keywords if kw}
+    slug_by_url = {url: urlsplit(url).path for url in urls}
+    slug_positions = _first_occurrence_index(html, set(slug_by_url.values()))
     for url in urls:
         if url in seen:
             continue
         seen.add(url)
 
-        slug = urlsplit(url).path
-        snippet_index = html.find(slug)
+        slug = slug_by_url[url]
+        snippet_index = slug_positions.get(slug, -1)
+        if snippet_index == -1:
+            snippet_index = html.find(slug)
         if snippet_index == -1:
             snippet_index = html.find(url)
         if snippet_index == -1:

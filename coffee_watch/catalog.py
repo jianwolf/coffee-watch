@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from typing import Any, Optional
+from typing import Any
 
 from .constants import USER_AGENT
 from .models import ProductCandidate, RoasterRunStatus, RoasterSource, VariantInfo
@@ -183,7 +183,7 @@ def _variant_grind_rank(title: str) -> int:
 
 def _preferred_price_variant(
     product: ProductCandidate,
-) -> tuple[Optional[VariantInfo], str]:
+) -> tuple[VariantInfo | None, str]:
     if not product.variants:
         return None, ""
     variants = [variant for variant in product.variants if variant.available]
@@ -211,9 +211,15 @@ def _preferred_price_variant(
 
 
 def _money_label(price: str) -> str:
-    if price.startswith("$"):
-        return price
-    return f"${price}"
+    cleaned = price.strip()
+    if not cleaned:
+        return ""
+    # Bare numbers ("22.00") come from API payloads whose storefronts are
+    # priced in USD; anything already carrying a currency marker ("$24.00",
+    # "€18.50", "kr 145") must not get a second symbol stacked on top.
+    if cleaned[0].isdigit() or cleaned[0] == ".":
+        return f"${cleaned}"
+    return cleaned
 
 
 def _price_label(price: str, price_variant: str) -> str:
@@ -279,7 +285,7 @@ def catalog_product_from_candidate(
     first_seen_at: str,
     is_new: bool,
     date_source: str,
-    update_date: Optional[date],
+    update_date: date | None,
     http_last_modified: str,
     wix_lastmod: str,
     errors: list[str],

@@ -98,3 +98,38 @@ def test_grams_from_size_label_converts_common_formats():
     assert grams_from_size_label("100g") == 100
     assert grams_from_size_label("4 oz") == 113
     assert grams_from_size_label("2 lb") == 907
+
+
+def test_extract_size_button_labels_survives_self_closing_void_tags():
+    # HTMLParser replays <br/> as start+end; the end tag must not desync the
+    # button depth and drop the label.
+    html = """
+    <button>250 g <br/></button>
+    <button><img src="icon.png"/>2 lb</button>
+    """
+
+    assert extract_size_button_labels(html) == ("250 g", "2 lb")
+
+
+def test_extract_product_page_price_skips_shipping_banner_prices():
+    html = """
+    <html><body>
+      <div class="announcement">Free shipping on orders over $50</div>
+      <h1>Ethiopia Chelbesa</h1>
+      <div class="price">$24.00</div>
+    </body></html>
+    """
+
+    assert extract_product_page_price(html) == "$24.00"
+
+
+def test_extract_product_page_price_returns_empty_when_only_banner_prices():
+    html = "<html><body><div>Free shipping on orders over $50</div></body></html>"
+
+    assert extract_product_page_price(html) == ""
+
+
+def test_extract_product_page_price_handles_thousands_separators():
+    html = '<html><body><h1>Auction Lot</h1><span>$1,050.00</span></body></html>'
+
+    assert extract_product_page_price(html) == "$1050.00"
