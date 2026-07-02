@@ -28,7 +28,6 @@ def _status(**overrides) -> RoasterRunStatus:
         classified_by_source={},
         undated=0,
         outside_window=0,
-        grounding_queries=(),
         completed_at="2026-04-18T00:00:00+00:00",
         note="",
     )
@@ -84,7 +83,7 @@ def test_collect_resume_targets_skips_success_with_catalog(tmp_path: Path):
 
 
 class _NullLogger:
-    def warning(self, *args, **kwargs):  # noqa: D401 - test shim
+    def warning(self, *args, **kwargs):
         return None
 
     def info(self, *args, **kwargs):

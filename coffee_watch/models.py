@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -12,18 +12,18 @@ class RoasterSource:
     products_path: str = "/products.json"
     enabled: bool = True
     products_type: str = "auto"  # auto|json|html
-    products_parser: Optional[str] = None
+    products_parser: str | None = None
     jitter_multiplier: float = 1.0
     products_headers: dict[str, str] = field(default_factory=dict)
     products_params: dict[str, str] = field(default_factory=dict)
     product_page_headers: dict[str, str] = field(default_factory=dict)
     product_link_patterns: tuple[str, ...] = ("/products/", "/product/")
     product_link_exclude_patterns: tuple[str, ...] = ()
-    product_url_template: Optional[str] = None
-    json_items_path: Optional[tuple[str, ...]] = None
-    product_fields: Optional["ProductFieldConfig"] = None
-    pagination: Optional["PaginationConfig"] = None
-    max_products: Optional[int] = None
+    product_url_template: str | None = None
+    json_items_path: tuple[str, ...] | None = None
+    product_fields: ProductFieldConfig | None = None
+    pagination: PaginationConfig | None = None
+    max_products: int | None = None
     page_text_stop_phrases: tuple[str, ...] = ()
     verify_variant_pages: bool = False
     include_tags: tuple[str, ...] = ()
@@ -31,13 +31,6 @@ class RoasterSource:
     include_product_types: tuple[str, ...] = ()
     exclude_product_types: tuple[str, ...] = ()
     exclude_title_keywords: tuple[str, ...] = ()
-
-    @property
-    def products_url(self) -> str:
-        from urllib.parse import urljoin
-
-        base = self.base_url if self.base_url.endswith("/") else f"{self.base_url}/"
-        return urljoin(base, self.products_path.lstrip("/"))
 
 
 @dataclass(frozen=True)
@@ -49,7 +42,7 @@ class ProductCandidate:
     list_price: str = ""
     list_badge: str = ""
     body_html: str = ""
-    variants: tuple["VariantInfo", ...] = ()
+    variants: tuple[VariantInfo, ...] = ()
     visible_variant_titles: tuple[str, ...] = ()
     storefront_status: str = ""
     shopify_updated_at: str = ""
@@ -77,8 +70,8 @@ class PaginationConfig:
     page_param: str = "page"
     start: int = 1
     max_pages: int = 1
-    page_size_param: Optional[str] = None
-    page_size: Optional[int] = None
+    page_size_param: str | None = None
+    page_size: int | None = None
     stop_on_empty: bool = True
 
 
@@ -90,7 +83,7 @@ class RoasterRunStatus:
     run_id: str
     status: str  # success | failure | empty | skipped
     attempts: int
-    catalog_path: Optional[str]
+    catalog_path: str | None
     products_found: int
     new_products: int
     fetched_pages: int
@@ -98,7 +91,6 @@ class RoasterRunStatus:
     classified_by_source: dict[str, int] = field(default_factory=dict)
     undated: int = 0
     outside_window: int = 0
-    grounding_queries: tuple[str, ...] = ()
     completed_at: str = ""
     note: str = ""
 
@@ -116,7 +108,6 @@ class RoasterRunStatus:
             "classified_by_source": dict(self.classified_by_source),
             "undated": self.undated,
             "outside_window": self.outside_window,
-            "grounding_queries": list(self.grounding_queries),
             "completed_at": self.completed_at,
             "note": self.note,
         }

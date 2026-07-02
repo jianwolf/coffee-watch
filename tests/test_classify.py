@@ -4,8 +4,6 @@ import logging
 from datetime import date
 from pathlib import Path
 
-import pytest
-
 from coffee_watch.classify import (
     NEW_PRODUCTS_WINDOW_DAYS,
     classify_new_products,
@@ -67,7 +65,7 @@ def test_classify_new_products_marks_inside_window(tmp_path):
     try:
         product = _product(shopify_published_at="2026-04-18T00:00:00Z")
         run_day = date(2026, 4, 18)
-        new_urls, by_source, undated, outside = classify_new_products(
+        result = classify_new_products(
             [product],
             run_day,
             seen,
@@ -78,10 +76,14 @@ def test_classify_new_products_marks_inside_window(tmp_path):
             window_days=NEW_PRODUCTS_WINDOW_DAYS,
             persist_seen=True,
         )
-        assert product.url in new_urls
-        assert by_source["shopify_published_at"] == 1
-        assert undated == 0
-        assert outside == 0
+        assert product.url in result.new_urls
+        assert result.by_source["shopify_published_at"] == 1
+        assert result.undated == 0
+        assert result.outside_window == 0
+        # New product: the reported first_seen_at must match what was persisted.
+        assert result.first_seen_by_url[product.url] == seen.first_seen_for_urls(
+            [product.url]
+        ).get(product.url, "")
     finally:
         seen.close()
 
@@ -91,7 +93,7 @@ def test_classify_new_products_outside_window(tmp_path):
     try:
         product = _product(shopify_published_at="2026-04-01T00:00:00Z")
         run_day = date(2026, 4, 18)
-        new_urls, _, _, outside = classify_new_products(
+        result = classify_new_products(
             [product],
             run_day,
             seen,
@@ -101,8 +103,31 @@ def test_classify_new_products_outside_window(tmp_path):
             "shopify",
             persist_seen=True,
         )
-        assert product.url not in new_urls
-        assert outside == 1
+        assert product.url not in result.new_urls
+        assert result.outside_window == 1
+    finally:
+        seen.close()
+
+
+def test_undated_product_counts_once_when_not_persisting(tmp_path):
+    seen = _seen(tmp_path)
+    try:
+        # No published_at, no last-modified, never seen: no date evidence.
+        product = _product()
+        result = classify_new_products(
+            [product],
+            date(2026, 4, 18),
+            seen,
+            {product.url: ""},
+            {},
+            {},
+            "shopify",
+            persist_seen=False,
+        )
+        assert product.url not in result.new_urls
+        assert result.undated == 1
+        # outside_window is reserved for dated products.
+        assert result.outside_window == 0
     finally:
         seen.close()
 
@@ -127,7 +152,7 @@ def test_description_edit_does_not_reset_seen_at(tmp_path):
         # the earlier first_seen_at (now outside the window).
         later_run_day = date(2026, 4, 30)
         product_v2 = _product(url=url, name="x")
-        new_urls, by_source, undated, outside = classify_new_products(
+        result = classify_new_products(
             [product_v2],
             later_run_day,
             seen,
@@ -137,7 +162,11 @@ def test_description_edit_does_not_reset_seen_at(tmp_path):
             "generic",
             persist_seen=False,
         )
-        assert url not in new_urls
-        assert outside == 1
+        assert url not in result.new_urls
+        assert result.outside_window == 1
+        # Known URL: first_seen_by_url carries the original timestamp forward.
+        assert result.first_seen_by_url[url] == seen.first_seen_for_urls([url]).get(
+            url, ""
+        )
     finally:
         seen.close()

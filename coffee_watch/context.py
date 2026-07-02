@@ -10,7 +10,7 @@ from urllib.robotparser import RobotFileParser
 import httpx
 
 from .config import Settings
-from .http_limits import PerHostLimiter
+from .http_limits import Host429Gate, PerHostLimiter
 from .seen_products import SeenProducts
 
 
@@ -25,3 +25,6 @@ class RunContext:
     denylist: set[str]
     assets_dir: Path
     robots_cache: dict[str, RobotFileParser] = field(default_factory=dict)
+    # Hosts that 429 every page request are fast-skipped for the whole run
+    # (docs/shopify-bot-gating.md); page fetches share this tracker.
+    page_gate: Host429Gate = field(default_factory=Host429Gate)

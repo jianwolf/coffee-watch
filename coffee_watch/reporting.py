@@ -3,11 +3,24 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import os
+import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .models import RoasterSource
 from .url_utils import safe_slug
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Write ``text`` to a temp file, then atomically replace ``path``.
+
+    Catalog and status JSON is read back by resume mode and the analysis
+    skill; an interrupted run must not leave a torn, half-written file.
+    """
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def log_products_json_snippet(
@@ -43,7 +56,7 @@ def report_file_path(
     reports_dir: Path,
     roaster_name: str,
     run_id: str,
-    kind: Optional[str],
+    kind: str | None,
     ext: str,
 ) -> Path:
     _ensure_directory(reports_dir)
@@ -71,10 +84,7 @@ def new_products_catalog_path(reports_dir: Path, run_id: str) -> Path:
 
 def save_json(path: Path, payload: Any) -> Path:
     _ensure_directory(path.parent)
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=True) + "\n",
-        encoding="utf-8",
-    )
+    write_text_atomic(path, json.dumps(payload, indent=2, ensure_ascii=True) + "\n")
     return path
 
 
@@ -92,7 +102,7 @@ def save_products_json(
         f"products.raw.page{page_index}",
         "json",
     )
-    path.write_text(json_text, encoding="utf-8")
+    write_text_atomic(path, json_text)
     return path
 
 
@@ -102,7 +112,7 @@ def save_products_json_pretty(
     roaster: RoasterSource,
     page_index: int,
     data: Any,
-) -> Optional[Path]:
+) -> Path | None:
     try:
         pretty = json.dumps(data, indent=2, ensure_ascii=True)
     except (TypeError, ValueError):
@@ -114,8 +124,40 @@ def save_products_json_pretty(
         f"products.pretty.page{page_index}",
         "json",
     )
-    path.write_text(pretty, encoding="utf-8")
+    write_text_atomic(path, pretty)
     return path
+
+
+def prune_assets_dir(
+    assets_dir: Path, retention_days: int, logger: logging.Logger
+) -> int:
+    """Delete raw payload files in ``assets_dir`` older than ``retention_days``.
+
+    Assets are a per-run debugging cache, re-created on every scrape; without
+    pruning the directory grows without bound. ``retention_days <= 0``
+    disables pruning. Only regular files directly inside ``assets_dir`` are
+    considered.
+    """
+    if retention_days <= 0 or not assets_dir.is_dir():
+        return 0
+    cutoff = time.time() - retention_days * 86400
+    removed = 0
+    for path in assets_dir.iterdir():
+        try:
+            if not path.is_file() or path.stat().st_mtime >= cutoff:
+                continue
+            path.unlink()
+            removed += 1
+        except OSError as exc:
+            logger.warning("Failed to prune asset %s: %s", path, exc)
+    if removed:
+        logger.info(
+            "Pruned %d asset file(s) older than %d days from %s",
+            removed,
+            retention_days,
+            assets_dir,
+        )
+    return removed
 
 
 def today_roaster_catalog_paths(reports_dir: Path, run_id: str) -> list[Path]:

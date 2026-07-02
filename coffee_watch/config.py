@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 LOG_FORMATS = frozenset({"text", "json"})
 LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"})
@@ -18,6 +17,8 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class Settings:
     http_timeout_s: float
+    http_total_timeout_s: float
+    http_max_response_bytes: int
     http_max_retries: int
     jitter_min_s: float
     jitter_max_s: float
@@ -37,6 +38,7 @@ class Settings:
     denylist_path: Path
     reports_dir: Path
     assets_dir: Path
+    assets_retention_days: int
     log_path: Path
     log_level: str
     log_format: str
@@ -53,6 +55,10 @@ class Settings:
             )
         if self.http_timeout_s <= 0:
             issues.append("http_timeout_s must be > 0")
+        if self.http_total_timeout_s < 0:
+            issues.append("http_total_timeout_s must be >= 0 (0 disables the deadline)")
+        if self.http_max_response_bytes < 0:
+            issues.append("http_max_response_bytes must be >= 0 (0 disables the cap)")
         if self.http_max_retries < 0:
             issues.append("http_max_retries must be >= 0")
         if self.jitter_min_s < 0 or self.jitter_max_s < 0:
@@ -75,13 +81,17 @@ class Settings:
             issues.append("page_text_max_chars must be >= 0")
         if self.log_json_max_chars < 0:
             issues.append("log_json_max_chars must be >= 0")
+        if self.assets_retention_days < 0:
+            issues.append("assets_retention_days must be >= 0 (0 disables pruning)")
         if issues:
             raise ConfigError("; ".join(issues))
 
     @staticmethod
-    def defaults() -> "Settings":
+    def defaults() -> Settings:
         return Settings(
             http_timeout_s=20.0,
+            http_total_timeout_s=120.0,
+            http_max_response_bytes=10_000_000,
             http_max_retries=2,
             jitter_min_s=0.7,
             jitter_max_s=2.0,
@@ -101,6 +111,7 @@ class Settings:
             denylist_path=Path("config/denylist.txt"),
             reports_dir=Path("reports"),
             assets_dir=Path("logs/assets"),
+            assets_retention_days=30,
             log_path=Path("logs/coffee_watch.log"),
             log_level="INFO",
             log_format="text",
@@ -111,7 +122,7 @@ def add_bool_flag(
     parser: argparse.ArgumentParser,
     name: str,
     help_text: str,
-    default: Optional[bool],
+    default: bool | None,
 ) -> None:
     dest = name.replace("-", "_")
     group = parser.add_mutually_exclusive_group()
@@ -122,12 +133,22 @@ def add_bool_flag(
     parser.set_defaults(**{dest: default})
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Scrape specialty coffee roaster catalogs into normalized JSON"
     )
     parser.add_argument("--config", type=Path, help="Path to JSON config file")
     parser.add_argument("--http-timeout-s", type=float, help="HTTP timeout in seconds")
+    parser.add_argument(
+        "--http-total-timeout-s",
+        type=float,
+        help="Hard deadline per HTTP request in seconds, including all reads (0 disables)",
+    )
+    parser.add_argument(
+        "--http-max-response-bytes",
+        type=int,
+        help="Max HTTP response body size in bytes (0 disables the cap)",
+    )
     parser.add_argument(
         "--http-max-retries",
         type=int,
@@ -191,6 +212,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--assets-dir", type=Path, help="Directory for raw/pretty scrape assets"
     )
+    parser.add_argument(
+        "--assets-retention-days",
+        type=int,
+        help="Days to keep raw payloads in the assets dir (0 disables pruning)",
+    )
     parser.add_argument("--log-path", type=Path, help="Log file path")
     parser.add_argument("--log-level", type=str, help="Log level (e.g. INFO)")
     parser.add_argument(
@@ -202,20 +228,22 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def load_config_file(path: Optional[Path]) -> dict[str, Any]:
+def load_config_file(path: Path | None) -> dict[str, Any]:
+    """Load the JSON config file, failing closed on any problem.
+
+    An explicitly requested config that is missing or malformed must abort the
+    run rather than silently fall back to defaults.
+    """
     if path is None:
         return {}
     if not path.exists():
-        print(f"Config file not found: {path}", file=sys.stderr)
-        return {}
+        raise ConfigError(f"Config file not found: {path}")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        print(f"Invalid config JSON ({path}): {exc}", file=sys.stderr)
-        return {}
+        raise ConfigError(f"Invalid config JSON ({path}): {exc}") from exc
     if not isinstance(data, dict):
-        print(f"Config file must contain a JSON object: {path}", file=sys.stderr)
-        return {}
+        raise ConfigError(f"Config file must contain a JSON object: {path}")
     return data
 
 
@@ -294,6 +322,12 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
 
     return Settings(
         http_timeout_s=_as_float("http_timeout_s", pick_value("http_timeout_s")),
+        http_total_timeout_s=_as_float(
+            "http_total_timeout_s", pick_value("http_total_timeout_s")
+        ),
+        http_max_response_bytes=_as_int(
+            "http_max_response_bytes", pick_value("http_max_response_bytes")
+        ),
         http_max_retries=_as_int("http_max_retries", pick_value("http_max_retries")),
         jitter_min_s=_as_float("jitter_min_s", pick_value("jitter_min_s")),
         jitter_max_s=_as_float("jitter_max_s", pick_value("jitter_max_s")),
@@ -327,6 +361,9 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         denylist_path=pick_path("denylist_path"),
         reports_dir=pick_path("reports_dir"),
         assets_dir=pick_path("assets_dir"),
+        assets_retention_days=_as_int(
+            "assets_retention_days", pick_value("assets_retention_days")
+        ),
         log_path=pick_path("log_path"),
         log_level=log_level,
         log_format=log_format,

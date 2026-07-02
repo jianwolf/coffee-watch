@@ -27,6 +27,7 @@ from .reporting import (
     combined_catalog_path,
     load_roaster_catalogs,
     new_products_catalog_path,
+    prune_assets_dir,
     save_json,
     today_roaster_catalog_paths,
 )
@@ -47,10 +48,15 @@ async def _run_roasters(
     results = await asyncio.gather(*tasks, return_exceptions=True)
     scrape_results: list[RoasterScrapeResult] = []
     failed_names: list[str] = []
-    for roaster, result in zip(target_roasters, results):
-        if isinstance(result, Exception):
-            ctx.logger.exception(
-                "Roaster task for %s raised: %s", roaster.name, result
+    for roaster, result in zip(target_roasters, results, strict=True):
+        # BaseException, not Exception: gather() also hands back
+        # CancelledError, which must not be mistaken for a scrape result.
+        if isinstance(result, BaseException):
+            ctx.logger.error(
+                "Roaster task for %s raised: %s",
+                roaster.name,
+                result,
+                exc_info=result,
             )
             failed_names.append(roaster.name)
             continue
@@ -145,6 +151,7 @@ async def run(settings: Settings) -> int:
     log = logging.getLogger("coffee_watch")
 
     settings.assets_dir.mkdir(parents=True, exist_ok=True)
+    prune_assets_dir(settings.assets_dir, settings.assets_retention_days, log)
     log.info(
         "Coffee Watch scrape-only run: roasters=%s output=%s fetch_product_pages=%s",
         settings.roasters_path,

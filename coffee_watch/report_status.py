@@ -6,10 +6,10 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .models import RoasterRunStatus, RoasterSource
-from .reporting import make_roaster_catalog_path, report_file_path
+from .reporting import make_roaster_catalog_path, report_file_path, write_text_atomic
 
 STATUS_SUCCESS = "success"
 STATUS_FAILURE = "failure"
@@ -25,12 +25,12 @@ def write_status_sidecar(
     reports_dir: Path,
     status: RoasterRunStatus,
     logger: logging.Logger,
-) -> Optional[Path]:
+) -> Path | None:
     path = status_sidecar_path(reports_dir, status.roaster, status.run_id)
     try:
-        path.write_text(
+        write_text_atomic(
+            path,
             json.dumps(status.to_dict(), indent=2, ensure_ascii=True) + "\n",
-            encoding="utf-8",
         )
     except OSError as exc:
         logger.warning("Failed to write status sidecar %s: %s", path, exc)
@@ -42,7 +42,7 @@ def read_status_sidecar(
     reports_dir: Path,
     roaster_name: str,
     run_id: str,
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     path = status_sidecar_path(reports_dir, roaster_name, run_id)
     if not path.exists():
         return None
@@ -56,7 +56,7 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def status_is_retryable(status_dict: Optional[dict[str, Any]]) -> bool:
+def status_is_retryable(status_dict: dict[str, Any] | None) -> bool:
     if not status_dict:
         return False
     return status_dict.get("status") in {STATUS_FAILURE, STATUS_EMPTY}

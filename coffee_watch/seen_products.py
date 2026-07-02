@@ -1,36 +1,21 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import sqlite3
 import threading
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-
-
-@dataclass(frozen=True)
-class SeenProduct:
-    hash: str
-    url: str
-    title: str
-    description: str
-    first_seen_at: str
-    shopify_updated_at: str
-    roaster: str
-    platform: str
 
 
 class SeenProducts:
     """SQLite-backed `first-seen` tracker.
 
-    Writes and reads are synchronous; wrap calls from asyncio code via
-    :meth:`aget` / :meth:`arecord` which dispatch through ``asyncio.to_thread``
-    so the event loop isn't stalled by disk IO.
+    All methods are synchronous; asyncio code should call into this class
+    from a worker thread (``asyncio.to_thread``). The connection permits
+    cross-thread use and an internal lock serializes access.
     """
 
-    def __init__(self, path: Path, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(self, path: Path, logger: logging.Logger | None = None) -> None:
         self.path = path
         self._logger = logger
         self._lock = threading.Lock()
@@ -78,54 +63,14 @@ class SeenProducts:
         payload = f"{url.strip()}\n{title.strip()}\n{description.strip()}"
         return hashlib.sha3_512(payload.encode("utf-8")).hexdigest()
 
-    def get(self, hash_value: str) -> Optional[SeenProduct]:
-        with self._lock:
-            cursor = self._conn.execute(
-                "SELECT hash, url, title, description, first_seen_at, "
-                "shopify_updated_at, roaster, platform "
-                "FROM seen_products WHERE hash = ?",
-                (hash_value,),
-            )
-            row = cursor.fetchone()
-        if not row:
-            return None
-        return SeenProduct(
-            hash=row[0],
-            url=row[1],
-            title=row[2],
-            description=row[3],
-            first_seen_at=row[4],
-            shopify_updated_at=row[5],
-            roaster=row[6],
-            platform=row[7],
-        )
-
-    def first_seen_for_url(self, url: str) -> str:
-        """Return the earliest ``first_seen_at`` for any row matching ``url``.
-
-        This keeps the seen-product semantics stable under description edits:
-        a reworded description produces a new hash but we still recognize the
-        product by URL.
-        """
-        cleaned = url.strip()
-        if not cleaned:
-            return ""
-        with self._lock:
-            cursor = self._conn.execute(
-                "SELECT MIN(first_seen_at) FROM seen_products WHERE url = ? AND first_seen_at != ''",
-                (cleaned,),
-            )
-            row = cursor.fetchone()
-        if not row or row[0] is None:
-            return ""
-        return str(row[0])
-
     def first_seen_for_urls(self, urls: list[str]) -> dict[str, str]:
-        """Bulk variant of :meth:`first_seen_for_url`.
+        """Return ``url -> earliest first_seen_at`` for the given URLs.
 
-        Returns a mapping ``url -> earliest first_seen_at`` for every URL with
-        at least one non-empty ``first_seen_at`` row. URLs absent from the map
-        are unknown — callers should treat them as missing.
+        Matching by URL keeps the seen-product semantics stable under
+        description edits: a reworded description produces a new hash but the
+        product is still recognized. Only URLs with at least one non-empty
+        ``first_seen_at`` row appear in the result; absent URLs are unknown —
+        callers should treat them as missing.
         """
         cleaned = [u.strip() for u in urls if u and u.strip()]
         if not cleaned:
@@ -196,43 +141,9 @@ class SeenProducts:
             END
         """
 
-    def record(
-        self,
-        hash_value: str,
-        url: str,
-        title: str,
-        description: str,
-        first_seen_at: str,
-        shopify_updated_at: str = "",
-        roaster: str = "",
-        platform: str = "",
-    ) -> None:
-        try:
-            with self._lock:
-                self._conn.execute(
-                    self._UPSERT_SQL,
-                    (
-                        hash_value,
-                        url,
-                        title,
-                        description,
-                        first_seen_at,
-                        shopify_updated_at,
-                        roaster,
-                        platform,
-                    ),
-                )
-                self._conn.commit()
-        except sqlite3.Error as exc:
-            if self._logger:
-                self._logger.warning(
-                    "Failed to record seen product %s: %s", url, exc
-                )
-
     def record_many(self, rows: list[tuple]) -> None:
-        """Bulk variant of :meth:`record`. Each ``rows`` entry is the same
-        positional tuple ``record`` would build:
-        ``(hash, url, title, description, first_seen_at,
+        """Upsert seen-product rows. Each ``rows`` entry is the positional
+        tuple ``(hash, url, title, description, first_seen_at,
         shopify_updated_at, roaster, platform)``.
         """
         if not rows:
@@ -246,35 +157,6 @@ class SeenProducts:
                 self._logger.warning(
                     "Failed to bulk-record %d seen products: %s", len(rows), exc
                 )
-
-    async def aget(self, hash_value: str) -> Optional[SeenProduct]:
-        return await asyncio.to_thread(self.get, hash_value)
-
-    async def afirst_seen_for_url(self, url: str) -> str:
-        return await asyncio.to_thread(self.first_seen_for_url, url)
-
-    async def arecord(
-        self,
-        hash_value: str,
-        url: str,
-        title: str,
-        description: str,
-        first_seen_at: str,
-        shopify_updated_at: str = "",
-        roaster: str = "",
-        platform: str = "",
-    ) -> None:
-        await asyncio.to_thread(
-            self.record,
-            hash_value,
-            url,
-            title,
-            description,
-            first_seen_at,
-            shopify_updated_at,
-            roaster,
-            platform,
-        )
 
     def close(self) -> None:
         try:

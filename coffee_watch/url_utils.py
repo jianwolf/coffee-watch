@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import functools
 import re
-from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 
@@ -42,7 +41,7 @@ def build_url_with_params(base_url: str, path: str, params: dict[str, str]) -> s
 
 
 @functools.lru_cache(maxsize=512)
-def _compile_regex(source: str) -> Optional[re.Pattern[str]]:
+def _compile_regex(source: str) -> re.Pattern[str] | None:
     try:
         return re.compile(source)
     except re.error:
@@ -61,6 +60,16 @@ def matches_patterns(url: str, include: tuple[str, ...], exclude: tuple[str, ...
     if not include:
         return True
     return any(match(pattern) for pattern in include)
+
+
+def url_is_denylisted(url: str, denylist: set[str] | None) -> bool:
+    """True when the URL's netloc or bare hostname appears in ``denylist``."""
+    if not denylist:
+        return False
+    parts = urlsplit(url)
+    netloc = parts.netloc.lower()
+    host = (parts.hostname or "").lower()
+    return (bool(netloc) and netloc in denylist) or (bool(host) and host in denylist)
 
 
 def safe_slug(value: str) -> str:

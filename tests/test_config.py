@@ -4,7 +4,7 @@ import argparse
 
 import pytest
 
-from coffee_watch.config import ConfigError, Settings, build_settings
+from coffee_watch.config import ConfigError, Settings, build_settings, load_config_file
 
 
 def _args(**overrides):
@@ -108,3 +108,51 @@ def test_jitter_range_validation():
 def test_invalid_http_concurrency_raises():
     with pytest.raises(ConfigError):
         build_settings(_args(http_concurrency=0), {})
+
+
+def test_http_safety_defaults():
+    settings = build_settings(_args(), {})
+    assert settings.http_total_timeout_s == 120.0
+    assert settings.http_max_response_bytes == 10_000_000
+
+
+def test_negative_http_total_timeout_raises():
+    with pytest.raises(ConfigError, match="http_total_timeout_s"):
+        build_settings(_args(http_total_timeout_s=-1.0), {})
+
+
+def test_negative_http_max_response_bytes_raises():
+    with pytest.raises(ConfigError, match="http_max_response_bytes"):
+        build_settings(_args(), {"http_max_response_bytes": -1})
+
+
+def test_load_config_file_missing_raises(tmp_path):
+    with pytest.raises(ConfigError, match="not found"):
+        load_config_file(tmp_path / "nope.json")
+
+
+def test_load_config_file_invalid_json_raises(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text("{nope", encoding="utf-8")
+    with pytest.raises(ConfigError, match="Invalid config JSON"):
+        load_config_file(path)
+
+
+def test_load_config_file_non_object_raises(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(ConfigError, match="JSON object"):
+        load_config_file(path)
+
+
+def test_negative_assets_retention_days_raises():
+    with pytest.raises(ConfigError, match="assets_retention_days"):
+        build_settings(_args(), {"assets_retention_days": -1})
+
+
+def test_assets_retention_days_flag_overrides_config():
+    settings = build_settings(
+        _args(assets_retention_days=7), {"assets_retention_days": 90}
+    )
+
+    assert settings.assets_retention_days == 7

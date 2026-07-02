@@ -12,13 +12,12 @@ import logging
 import logging.handlers
 import time
 from pathlib import Path
-from typing import Optional
 
 TEXT_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 
 class JsonFormatter(logging.Formatter):
-    converter = time.gmtime
+    converter = staticmethod(time.gmtime)
 
     def format(self, record: logging.LogRecord) -> str:
         payload = {
@@ -42,7 +41,7 @@ def _make_formatter(fmt: str) -> logging.Formatter:
 
 def setup_logging(
     level: str,
-    log_path: Optional[Path] = None,
+    log_path: Path | None = None,
     log_format: str = "text",
     max_bytes: int = 5_000_000,
     backup_count: int = 5,

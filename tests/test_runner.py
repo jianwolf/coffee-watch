@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from coffee_watch import runner
 from coffee_watch.config import Settings
 from coffee_watch.models import RoasterRunStatus, RoasterSource
-from coffee_watch.report_status import STATUS_FAILURE, STATUS_SUCCESS
+from coffee_watch.report_status import STATUS_SUCCESS
 from coffee_watch.roaster_pipeline import RoasterScrapeResult
 
 

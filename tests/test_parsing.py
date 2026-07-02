@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
 
-from coffee_watch.config import Settings
+import pytest
+
+from coffee_watch.config import ConfigError, Settings
 from coffee_watch.parsing import (
     bool_from_config,
     load_roasters,
@@ -11,6 +14,7 @@ from coffee_watch.parsing import (
     parse_pagination,
     parse_variants,
     product_matches_filters,
+    resolve_product_url,
     to_str_tuple,
 )
 
@@ -86,3 +90,64 @@ def test_load_roasters_treats_string_false_enabled_as_disabled(tmp_path):
     settings = replace(Settings.defaults(), roasters_path=path)
 
     assert load_roasters(settings, logging.getLogger("test")) == []
+
+
+def test_resolve_product_url_anchors_schemeless_relative_urls():
+    resolved = resolve_product_url(
+        "https://example.com", "products/foo", "", "", None
+    )
+
+    assert resolved == "https://example.com/products/foo"
+
+
+def test_resolve_product_url_passes_absolute_urls_through():
+    resolved = resolve_product_url(
+        "https://example.com", "https://other.example.com/products/foo", "", "", None
+    )
+
+    assert resolved == "https://other.example.com/products/foo"
+
+
+def test_load_roasters_rejects_unknown_keys(tmp_path):
+    roasters_path = tmp_path / "roasters.json"
+    roasters_path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "Typo Roaster",
+                    "base_url": "https://example.com",
+                    "verify_varient_pages": True,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = replace(Settings.defaults(), roasters_path=roasters_path)
+
+    with pytest.raises(ConfigError, match=r"Typo Roaster.*verify_varient_pages"):
+        load_roasters(settings, logging.getLogger("test"))
+
+
+def test_parse_pagination_rejects_unknown_keys():
+    with pytest.raises(ConfigError, match=r"pagination.*max_page"):
+        parse_pagination({"max_page": 3}, "Some Roaster")
+
+
+def test_load_roasters_reports_roaster_name_for_bad_numbers(tmp_path):
+    roasters_path = tmp_path / "roasters.json"
+    roasters_path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "Bad Jitter",
+                    "base_url": "https://example.com",
+                    "jitter_multiplier": "fast",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    settings = replace(Settings.defaults(), roasters_path=roasters_path)
+
+    with pytest.raises(ConfigError, match="jitter_multiplier for Bad Jitter"):
+        load_roasters(settings, logging.getLogger("test"))

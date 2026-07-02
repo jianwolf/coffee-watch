@@ -4,11 +4,11 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urljoin
 
 from .catalog_parsers import parse_catalog_html
-from .config import Settings
+from .config import ConfigError, Settings
 from .models import (
     PaginationConfig,
     ProductCandidate,
@@ -66,7 +66,7 @@ def to_str_tuple(
     return default
 
 
-def parse_items_path(value: Any) -> Optional[tuple[str, ...]]:
+def parse_items_path(value: Any) -> tuple[str, ...] | None:
     if value is None:
         return None
     if isinstance(value, list):
@@ -144,9 +144,58 @@ def product_matches_filters(
     return True
 
 
-def parse_product_fields(value: Any) -> Optional[ProductFieldConfig]:
+# Keys accepted in config/roasters.json entries. A key outside this set is a
+# config typo (e.g. "verify_varient_pages") that would otherwise silently
+# disable the feature it was meant to enable — fail fast instead.
+_ROASTER_KEYS = frozenset(
+    {
+        "name",
+        "base_url",
+        "platform",
+        "products_path",
+        "enabled",
+        "products_type",
+        "products_parser",
+        "jitter_multiplier",
+        "products_headers",
+        "products_params",
+        "product_page_headers",
+        "product_link_patterns",
+        "product_link_exclude_patterns",
+        "product_url_template",
+        "json_items_path",
+        "product_fields",
+        "pagination",
+        "max_products",
+        "page_text_stop_phrases",
+        "verify_variant_pages",
+        "include_tags",
+        "exclude_tags",
+        "include_product_types",
+        "exclude_product_types",
+        "exclude_title_keywords",
+    }
+)
+_PRODUCT_FIELD_KEYS = frozenset({"name", "url", "handle", "id"})
+_PAGINATION_KEYS = frozenset(
+    {"page_param", "start", "max_pages", "page_size_param", "page_size", "stop_on_empty"}
+)
+
+
+def _check_known_keys(
+    value: dict[str, Any], allowed: frozenset[str], section: str, context: str
+) -> None:
+    unknown = sorted(key for key in value if key not in allowed)
+    if unknown:
+        raise ConfigError(
+            f"Unknown {section} key(s) for {context}: {', '.join(unknown)}"
+        )
+
+
+def parse_product_fields(value: Any, context: str = "roaster") -> ProductFieldConfig | None:
     if not isinstance(value, dict):
         return None
+    _check_known_keys(value, _PRODUCT_FIELD_KEYS, "product_fields", context)
     return ProductFieldConfig(
         name_fields=to_str_tuple(value.get("name"), ProductFieldConfig().name_fields),
         url_fields=to_str_tuple(value.get("url"), ProductFieldConfig().url_fields),
@@ -157,17 +206,21 @@ def parse_product_fields(value: Any) -> Optional[ProductFieldConfig]:
     )
 
 
-def parse_pagination(value: Any) -> Optional[PaginationConfig]:
+def parse_pagination(value: Any, context: str = "roaster") -> PaginationConfig | None:
     if not isinstance(value, dict):
         return None
-    return PaginationConfig(
-        page_param=str(value.get("page_param", "page")),
-        start=int(value.get("start", 1)),
-        max_pages=int(value.get("max_pages", 1)),
-        page_size_param=value.get("page_size_param"),
-        page_size=int(value["page_size"]) if value.get("page_size") is not None else None,
-        stop_on_empty=bool_from_config(value.get("stop_on_empty"), default=True),
-    )
+    _check_known_keys(value, _PAGINATION_KEYS, "pagination", context)
+    try:
+        return PaginationConfig(
+            page_param=str(value.get("page_param", "page")),
+            start=int(value.get("start", 1)),
+            max_pages=int(value.get("max_pages", 1)),
+            page_size_param=value.get("page_size_param"),
+            page_size=int(value["page_size"]) if value.get("page_size") is not None else None,
+            stop_on_empty=bool_from_config(value.get("stop_on_empty"), default=True),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"Invalid pagination value for {context}: {exc}") from exc
 
 
 def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSource]:
@@ -186,9 +239,14 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
         return []
 
     roasters: list[RoasterSource] = []
-    for entry in data:
+    for index, entry in enumerate(data):
         if not isinstance(entry, dict):
             continue
+        label = (
+            str(entry.get("name") or entry.get("base_url") or "").strip()
+            or f"roasters[{index}]"
+        )
+        _check_known_keys(entry, _ROASTER_KEYS, "roaster config", label)
         base_url = normalize_base_url(str(entry.get("base_url", "")).strip())
         if not base_url:
             continue
@@ -200,6 +258,24 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
                 base_url,
             )
             products_type = "auto"
+        try:
+            jitter_multiplier = float(entry.get("jitter_multiplier", 1.0))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(
+                f"jitter_multiplier for {label} must be a number; "
+                f"got {entry.get('jitter_multiplier')!r}"
+            ) from exc
+        try:
+            max_products = (
+                int(entry["max_products"])
+                if entry.get("max_products") is not None
+                else None
+            )
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(
+                f"max_products for {label} must be an integer; "
+                f"got {entry.get('max_products')!r}"
+            ) from exc
         roaster = RoasterSource(
             name=str(entry.get("name", base_url)),
             base_url=base_url,
@@ -212,7 +288,7 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
                 if entry.get("products_parser") is not None
                 else None
             ),
-            jitter_multiplier=float(entry.get("jitter_multiplier", 1.0)),
+            jitter_multiplier=jitter_multiplier,
             products_headers=to_str_dict(entry.get("products_headers")),
             products_params=to_str_dict(entry.get("products_params")),
             product_page_headers=to_str_dict(entry.get("product_page_headers")),
@@ -228,13 +304,9 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
             ),
             product_url_template=entry.get("product_url_template"),
             json_items_path=parse_items_path(entry.get("json_items_path")),
-            product_fields=parse_product_fields(entry.get("product_fields")),
-            pagination=parse_pagination(entry.get("pagination")),
-            max_products=(
-                int(entry["max_products"])
-                if entry.get("max_products") is not None
-                else None
-            ),
+            product_fields=parse_product_fields(entry.get("product_fields"), label),
+            pagination=parse_pagination(entry.get("pagination"), label),
+            max_products=max_products,
             page_text_stop_phrases=to_str_tuple(
                 entry.get("page_text_stop_phrases"), (), fallback_on_empty=False
             ),
@@ -264,7 +336,7 @@ def load_roasters(settings: Settings, logger: logging.Logger) -> list[RoasterSou
     return roasters
 
 
-def extract_items_by_path(data: Any, path: Optional[tuple[str, ...]]) -> list[Any]:
+def extract_items_by_path(data: Any, path: tuple[str, ...] | None) -> list[Any]:
     if not path:
         return []
     current: Any = data
@@ -276,7 +348,7 @@ def extract_items_by_path(data: Any, path: Optional[tuple[str, ...]]) -> list[An
     return current if isinstance(current, list) else []
 
 
-def extract_items_list(data: Any, items_path: Optional[tuple[str, ...]]) -> list[Any]:
+def extract_items_list(data: Any, items_path: tuple[str, ...] | None) -> list[Any]:
     if items_path:
         items = extract_items_by_path(data, items_path)
         if items:
@@ -307,21 +379,19 @@ def product_id_from_url(url: str) -> str:
     return digest
 
 
-def _grams_from_variant_label(value: str) -> int:
-    return grams_from_size_label(value)
-
-
 def _grams_from_variant(variant: dict[str, Any]) -> int:
     for field in ("title", "option1", "option2", "option3"):
         label = str(variant.get(field) or "").strip()
         if not label:
             continue
-        grams = _grams_from_variant_label(label)
+        grams = grams_from_size_label(label)
         if grams > 0:
             return grams
     grams_value = variant.get("grams")
+    if grams_value is None or grams_value == "":
+        return 0
     try:
-        return int(grams_value) if grams_value not in (None, "") else 0
+        return int(grams_value)
     except (TypeError, ValueError):
         return 0
 
@@ -353,7 +423,7 @@ def resolve_product_url(
     url: str,
     handle: str,
     item_id: str,
-    url_template: Optional[str],
+    url_template: str | None,
 ) -> str:
     resolved = url
     if not resolved and (handle or item_id) and url_template:
@@ -365,8 +435,10 @@ def resolve_product_url(
         resolved = urljoin(base_url, f"/products/{handle}")
     if not resolved:
         return ""
-    resolved = urljoin(base_url, resolved) if resolved.startswith("/") else resolved
-    return canonicalize_url(resolved)
+    # urljoin passes absolute URLs through untouched, so this also anchors
+    # schemeless values like "products/foo" instead of shipping a relative
+    # URL that can never be fetched or clicked.
+    return canonicalize_url(urljoin(base_url, resolved))
 
 
 def parse_products_json(
@@ -375,8 +447,8 @@ def parse_products_json(
     roaster: RoasterSource,
     max_count: int,
     product_fields: ProductFieldConfig,
-    url_template: Optional[str],
-    items_path: Optional[tuple[str, ...]],
+    url_template: str | None,
+    items_path: tuple[str, ...] | None,
 ) -> list[ProductCandidate]:
     items = extract_items_list(data, items_path)
 
