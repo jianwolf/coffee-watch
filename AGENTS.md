@@ -78,6 +78,7 @@
 - Per-host concurrency is the main politeness boundary. Keep `per_host_concurrency` conservative by default, and route product, sitemap, and robots requests through the same limiter. Rationale: each site should see a paced single queue. Tradeoff: one large roaster can still take time, but it will not be hammered.
 - Global concurrency can be high when per-host concurrency is low. The default `http_concurrency` may be large, such as 50, because it only allows different hosts to make progress in parallel. Rationale: there is no good reason to serialize unrelated roasters when host-level rules are respected. Tradeoff: if the configured roaster list grows to many distinct hosts or a network shows stress, lower `http_concurrency` without raising `per_host_concurrency`.
 - Do not bypass paywalls, login gates, Access Limited pages, anti-bot protections, or other access controls to collect coffee data. If a storefront blocks public access, preserve that as evidence instead of working around it.
+- Back off from bot-gated hosts instead of hammering them: after 3 consecutive 429s from one host, the run fast-skips its remaining page fetches and records the skips as per-product evidence (see docs/shopify-bot-gating.md). Catalog API and robots.txt requests are unaffected.
 
 ## Testing Guidelines
 - Use `pytest -q` as the default verification path.

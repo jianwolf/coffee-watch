@@ -1,5 +1,7 @@
 # Coffee Watch
 
+[![CI](https://github.com/jianwolf/coffee-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/jianwolf/coffee-watch/actions/workflows/ci.yml)
+
 Coffee Watch is a Codex-operated coffee scouting workflow for a home coffee buyer. Codex runs the bundled `coffee-scout` skill, which scrapes roaster catalogs, writes normalized JSON evidence, saves markdown digests, and produces an interactive Chinese buying report that ranks standout coffees by roaster for follow-up discussion. The report is a scouting menu, not a final checkout decision.
 
 Current workflow:
@@ -40,14 +42,21 @@ The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen
 - `main.py` - backward-compatible thin entrypoint
 - `coffee_watch/cli.py` - CLI parsing and config/bootstrap error handling
 - `coffee_watch/config.py` - settings model, CLI flags, config precedence, validation
+- `coffee_watch/context.py` - run-scoped context bundle shared across the pipeline
+- `coffee_watch/models.py` - roaster/product/variant/status dataclasses
 - `coffee_watch/runner.py` - high-level scrape orchestration
 - `coffee_watch/roaster_pipeline.py` - per-roaster scrape, classification, and catalog writing
 - `coffee_watch/catalog.py` - normalized catalog schema helpers
+- `coffee_watch/catalog_parsers.py` - named catalog HTML parsers (e.g. Wix shop pages)
+- `coffee_watch/parsing.py` - roaster config loading and product payload parsing
 - `coffee_watch/classify.py` - new-product date resolution
 - `coffee_watch/network.py` - HTTP fetching, retries, robots, sitemaps
-- `coffee_watch/http_limits.py` - per-host/global concurrency limiter
+- `coffee_watch/http_limits.py` - per-host/global concurrency limiter and 429 fast-skip gate
+- `coffee_watch/text_utils.py` - HTML-to-text, price/size extraction, sanitization
+- `coffee_watch/url_utils.py` - URL normalization, pattern matching, denylist checks
 - `coffee_watch/report_status.py` - structured status sidecars for resume logic
-- `coffee_watch/reporting.py` - JSON output helpers
+- `coffee_watch/reporting.py` - JSON output helpers and assets retention pruning
+- `coffee_watch/logging_utils.py` - text/JSON logging setup
 - `coffee_watch/seen_products.py` - SQLite first-seen tracker
 - `skills/coffee-scout/` - Codex skill for interactive coffee analysis
 - `tests/` - pytest coverage
@@ -125,13 +134,17 @@ Config precedence is:
 CLI flags > JSON config file > built-in defaults
 ```
 
-Config files are validated before a run starts. Unknown keys, invalid numeric values, invalid boolean strings, and unsupported log levels fail fast with a configuration error.
+Config files are validated before a run starts. Unknown keys, invalid numeric values, invalid boolean strings, and unsupported log levels fail fast with a configuration error. A missing or malformed `--config` file also aborts the run instead of silently falling back to defaults.
+
+`http_total_timeout_s` is a hard wall-clock deadline per request (covering slow trickled responses), and `http_max_response_bytes` caps how much of any response body is downloaded; set either to `0` to disable. `assets_retention_days` prunes raw payload caches in the assets dir at run start (`0` keeps everything).
 
 Example `config/settings.json`:
 
 ```json
 {
   "http_timeout_s": 20.0,
+  "http_total_timeout_s": 120.0,
+  "http_max_response_bytes": 10000000,
   "http_max_retries": 2,
   "jitter_min_s": 0.7,
   "jitter_max_s": 2.0,
@@ -151,6 +164,7 @@ Example `config/settings.json`:
   "denylist_path": "config/denylist.txt",
   "reports_dir": "reports",
   "assets_dir": "logs/assets",
+  "assets_retention_days": 30,
   "log_path": "logs/coffee_watch.log",
   "log_level": "INFO",
   "log_format": "text"
@@ -171,11 +185,15 @@ Generated local outputs include:
 - `reports/YYYYMMDD-z-roaster-digest.md` - Codex roaster scorecard digest
 - `reports/YYYYMMDD-z-new-digest.md` - Codex new-product digest
 - `reports/YYYYMMDD-z-codex-report.md` - Codex final interactive purchase report
-- `logs/assets/` - raw/pretty source payloads when enabled
+- `logs/assets/` - raw/pretty source payload cache, always written and pruned after `assets_retention_days`; the `save_raw_products_json`/`save_pretty_products_json` flags control extra copies in `reports/`
 - `logs/coffee_watch.log` - text or JSON log output
-- `logs/seen_products.db` - SQLite seen-product store
+- `logs/seen_products.db` - SQLite seen-product store (kept indefinitely; it is the first-seen source of truth)
 
 Product entries include fields such as roaster, product URL, title, selected buyable price label, selected price variant, all variants, storefront-visible variant titles and storefront status when verified, origin, process, tasting notes, availability, first-seen timestamp, raw product text, source metadata, and scrape errors. Origin/process/tasting-note extraction is best-effort and never replaces the source URL.
+
+## Known external constraints
+
+- Since 2026-06-10, some Shopify storefronts return HTTP 429 for product HTML pages fetched with the bot User-Agent while leaving the catalog API (`products.json`) open. This weakens storefront verification but not core catalog data. The scraper fast-skips a host's remaining page fetches after 3 consecutive 429s in a run, recording the skip per product and in the roaster status note, instead of retrying against a closed gate. Details, evidence, and response policy: [docs/shopify-bot-gating.md](docs/shopify-bot-gating.md).
 
 ## Coffee Scout Skill
 
