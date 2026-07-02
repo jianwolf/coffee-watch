@@ -18,6 +18,19 @@ def _clean(value: str) -> str:
     return " ".join(str(value or "").split())
 
 
+# Spec-sheet product pages often run one labeled field straight into the next
+# without punctuation ("...Peach, Key Lime Origin: El Paraiso Variety: ...");
+# a captured value must stop at the next field label or it swallows the rest
+# of the spec sheet.
+_FIELD_BOUNDARY = re.compile(
+    r"\s+(?:origin|region|country|variety|varietal|varieties|producer|producers|"
+    r"farm|co-op|coop|elevation|altitude|process|processing|harvest|method|roast|"
+    r"importer|sourced\s+by|cup\s+profile|current\s+components|components|"
+    r"farm\s+gate\s+price|fob\s+price|notes?)\s*[:|]",
+    re.IGNORECASE,
+)
+
+
 def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str:
     if not text:
         return ""
@@ -28,7 +41,11 @@ def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str:
         )
         match = pattern.search(text)
         if match:
-            return _clean(match.group(1))
+            value = match.group(1)
+            boundary = _FIELD_BOUNDARY.search(value)
+            if boundary:
+                value = value[: boundary.start()]
+            return _clean(value.strip(" .,"))
     return ""
 
 
@@ -40,7 +57,9 @@ def _split_notes(value: str) -> list[str]:
     notes: list[str] = []
     for part in parts:
         note = _trim_note(part.strip(" ."))
-        if note:
+        # Real flavor notes are short noun phrases; an overlong item means
+        # prose or a spec-sheet field leaked past the trimmers.
+        if note and len(note) <= 40:
             notes.append(note)
     return notes
 
@@ -57,6 +76,8 @@ def _trim_notes_value(value: str) -> str:
             " A ",
             " As ",
             " Coming ",
+            " We ",
+            " Our ",
         ),
     )
 

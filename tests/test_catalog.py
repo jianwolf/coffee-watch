@@ -565,3 +565,77 @@ def test_catalog_product_labels_bare_numeric_price_as_usd():
     )
 
     assert item["price_label"] == "250 g = $1050.00"
+
+
+def _catalog_item(raw_product_text: str) -> dict:
+    product = ProductCandidate(
+        product_id="p1",
+        name="Spec Sheet Coffee",
+        url="https://example.com/products/spec-sheet-coffee",
+        source="R",
+        variants=(VariantInfo("250 g", "20.00", 250, True),),
+    )
+    return catalog_product_from_candidate(
+        product=product,
+        roaster=RoasterSource("R", "https://example.com"),
+        raw_product_text=raw_product_text,
+        first_seen_at="",
+        is_new=False,
+        date_source="unknown",
+        update_date=None,
+        http_last_modified="",
+        wix_lastmod="",
+        errors=[],
+    )
+
+
+def test_catalog_product_stops_notes_at_next_spec_field():
+    # Spec-sheet pages run notes straight into the next labeled field with no
+    # punctuation; the field text must not leak into tasting notes.
+    item = _catalog_item(
+        "Tasting Notes: Raspberries, Peach, Key Lime Origin: El Paraiso, Cauca, "
+        "Colombia Variety: Castillo Producer: Samuel Diego Bermudez Elevation: 1960 masl"
+    )
+
+    assert item["tasting_notes"] == ["Raspberries", "Peach", "Key Lime"]
+    assert item["origin"] == "El Paraiso, Cauca, Colombia"
+
+
+def test_catalog_product_stops_notes_at_components_field():
+    item = _catalog_item(
+        "Tasting Notes: Berry, Chocolate, Creamy Current Components: 60% Washed Colombia"
+    )
+
+    assert item["tasting_notes"] == ["Berry", "Chocolate", "Creamy"]
+
+
+def test_catalog_product_rejects_prose_behind_notes_label():
+    # A generic "Notes:" label on a subscription page is not flavor data.
+    item = _catalog_item(
+        "Notes: Please purchase your subscription separately from other products"
+    )
+
+    assert item["tasting_notes"] == []
+
+
+def test_catalog_product_trims_notes_at_prose_sentence():
+    item = _catalog_item(
+        "Tasting notes | Strawberry syrup, Honeydew, Pomegranate, Violet, Dates "
+        "We are honored and excited to reintroduce you to a very special farm"
+    )
+
+    assert item["tasting_notes"] == [
+        "Strawberry syrup",
+        "Honeydew",
+        "Pomegranate",
+        "Violet",
+        "Dates",
+    ]
+
+
+def test_catalog_product_stops_process_at_next_spec_field():
+    item = _catalog_item(
+        "Process: Double fermentation thermal shock Elevation: 1930 masl"
+    )
+
+    assert item["process"] == "Double fermentation thermal shock"
