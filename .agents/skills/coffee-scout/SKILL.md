@@ -1,16 +1,25 @@
 ---
 name: coffee-scout
 description: >
-  Run Coffee Watch scraping when needed, analyze the fresh normalized catalog JSON, and produce the Coffee Watch four-part Chinese buying report: all-roaster digest, roaster scorecard digest, new-product digest, and a focused Codex menu-style synthesis that filters to the strongest roasters and coffees without forcing a final checkout decision. Use when the user asks Codex to scout, review, or recommend coffees from coffee-watch.
+  Run Coffee Watch scraping when needed, analyze the fresh normalized catalog JSON, and produce the Coffee Watch four-part Chinese buying report: all-roaster digest, roaster scorecard digest, new-product digest, and a focused menu-style synthesis that filters to the strongest roasters and coffees without forcing a final checkout decision. Use when the user asks to scout, review, or recommend coffees from coffee-watch.
 ---
 
 # Coffee Scout
 
 Use this skill to collect current Coffee Watch data and turn it into buying advice. Coffee Watch collects data only; this skill performs the judgment layer.
 
-This workflow is designed for Codex to run end to end. The user should be able to ask Codex for coffee scouting; Codex runs the scraper, reads the fresh JSON, writes markdown digest artifacts, and presents the interactive buying report.
+This workflow is designed to run end to end inside whichever coding agent the user is driving. The user should be able to ask for coffee scouting and get the whole result: you run the scraper, read the fresh JSON, write markdown digest artifacts, and present the interactive buying report.
 
 The consumer context is concrete: the user buys roughly once per month, usually from one roaster, choosing about two bags in a purchase session. Treat that as the eventual shopping constraint, not as the report structure. The report should help the user understand the best current options before they decide which roaster and which coffees to buy. Do not prematurely choose the roaster or exact bags for the user. Also do not dump every plausible roaster or every interesting coffee: that causes information overload. Open the buying conversation with a focused, opinionated shortlist that preserves room for follow-up.
+
+## Agent Portability
+
+This skill is agent-independent and must stay that way. It runs identically in any agent that reads `SKILL.md` files (Codex, Claude Code, Cursor, and others).
+
+- Use only ordinary shell commands and file reads/writes. Do not depend on a specific agent's tool names, slash commands, planning modes, or hosted services.
+- Do not call model APIs from repo code. Analysis happens in your own reasoning, not in the scraper.
+- Optional capabilities must degrade cleanly. If subagents, background jobs, or network approval prompts are unavailable in the host agent, do the work inline in this session instead of reporting a blocked step.
+- Refer to yourself in reports as the report author, not by a vendor name. Report section titles and artifact filenames are fixed by this skill and must not be rebranded per agent.
 
 ## Start
 
@@ -19,7 +28,7 @@ The consumer context is concrete: the user buys roughly once per month, usually 
 - If the user explicitly says not to scrape, use the latest matching catalog in `reports/`.
 - Otherwise, from the repo root, run the scraper before analyzing: use `.venv/bin/python scrape_coffee.py` when the project venv exists (a bare `python` may be a system interpreter without `httpx`), else `python scrape_coffee.py`. The user should not have to run the scraper manually.
 - If the scraper fails with `ModuleNotFoundError: httpx`, you are on the wrong interpreter: use the project venv or `pip install -r requirements.txt` first.
-- If the scraper fails with DNS, host resolution, connection, or sandbox/network errors, request network approval and rerun the same scraper command before analyzing.
+- If the scraper fails with DNS, host resolution, connection, or sandbox/network errors, request network approval and rerun the same scraper command before analyzing. If the host agent has no approval mechanism, say plainly that network access is blocked and what the user needs to enable.
 - Do not treat catalogs produced by a network-blocked run as fresh evidence. If the fresh combined catalog has zero products, all-empty roasters, or failures that look environment-wide, rerun with network access.
 - After scraping, prefer the fresh `reports/YYYYMMDD-new-products.json` for "what should I buy now?" style questions. Use `reports/YYYYMMDD-catalog.json` when the user asks for the full lineup. The scraper's window can be widened with `python scrape_coffee.py --new-window-days N` when the user's buying cadence is longer than 7 days.
 - Compute a session delta when an earlier `reports/YYYYMMDD-catalog.json` exists (prefer the one closest to the journal's last session date): coffees that sold out or disappeared, restocks, and notable price changes. Lead reports with what changed; compress background that repeats from previous sessions.
@@ -38,9 +47,9 @@ Produce four deliverables in order. Keep the first three as distinct digest repo
 1. `全局咖啡摘要 / All-Roaster Digest`: synthesize the full current catalog or per-roaster evidence. Mirror the `z-digest` style: overall summary, glossary for unfamiliar coffee terms, standout coffees grouped by buying logic, roasters with no strong picks or caveats, and closing buying directions.
 2. `烘焙商评分摘要 / Roaster Scorecard Digest`: rate every roaster's current lineup on a 1-10 scale for this user's current buying goal. Include a scorecard table, highlight roasters, lowlight roasters, and concise per-roaster analysis. Penalize roasters whose best coffees are unavailable.
 3. `新品摘要 / New-Product Digest`: use `reports/YYYYMMDD-new-products.json` when available. Focus on coffees discovered in the recent window, with overview, glossary, standout new coffees, roasters with no strong new picks, and closing new-product buying directions.
-4. `Codex 购买综合报告 / Final Purchase Synthesis`: synthesize the three digests into a focused, detailed, menu-style recommendation report for follow-up discussion. Default to about ten strongest roasters and no more than five highlighted coffees per roaster. Each included roaster and coffee should earn its place with clear evidence and a buying reason. Do not choose the ten roasters mechanically by score if that creates redundant recommendations; the default shortlist should balance high-ceiling trophy coffees, clean floral coffees, experimental/fruit-forward coffees, learning/value options, and any stated user preference. Suggest likely preference routes, but do not present a single selected roaster or final bag answer as the outcome. If important contenders are excluded, mention them briefly in a near-miss section instead of expanding them fully.
+4. `购买综合报告 / Final Purchase Synthesis`: synthesize the three digests into a focused, detailed, menu-style recommendation report for follow-up discussion. Default to about ten strongest roasters and no more than five highlighted coffees per roaster. Each included roaster and coffee should earn its place with clear evidence and a buying reason. Do not choose the ten roasters mechanically by score if that creates redundant recommendations; the default shortlist should balance high-ceiling trophy coffees, clean floral coffees, experimental/fruit-forward coffees, learning/value options, and any stated user preference. Suggest likely preference routes, but do not present a single selected roaster or final bag answer as the outcome. If important contenders are excluded, mention them briefly in a near-miss section instead of expanding them fully.
 
-If subagents are available, the first three digest passes may be delegated independently. Only delegate when the subagent can run with the same model capability and reasoning effort as the active Codex session; never use lower-capability subagents for these digests. If same-capability delegation is unavailable or uncertain, do the passes in the current Codex session.
+If the host agent provides subagents, the first three digest passes may be delegated independently. Only delegate when the subagent can run with the same model capability and reasoning effort as the active session; never use lower-capability subagents for these digests. If the host agent has no subagent mechanism, or same-capability delegation is unavailable or uncertain, do the passes in the current session.
 
 ## Workflow
 
@@ -71,23 +80,25 @@ Persist markdown artifacts in `reports/` before the final response. Use the date
 - `reports/YYYYMMDD-z-digest.md` for `全局咖啡摘要 / All-Roaster Digest`.
 - `reports/YYYYMMDD-z-roaster-digest.md` for `烘焙商评分摘要 / Roaster Scorecard Digest`.
 - `reports/YYYYMMDD-z-new-digest.md` for `新品摘要 / New-Product Digest`.
-- `reports/YYYYMMDD-z-codex-report.md` for `Codex 购买综合报告 / Final Purchase Synthesis`.
+- `reports/YYYYMMDD-z-purchase-report.md` for `购买综合报告 / Final Purchase Synthesis`.
+
+These filenames are part of the skill contract. Keep them identical in every agent so a session started in one agent can read the artifacts written by another.
 
 When subagents generate the first three digests, collect their markdown and save those exact digest artifacts before writing the final response. Generated report files are local outputs and may be ignored by git.
 
-The final Codex response must include the full `Codex 购买综合报告 / Final Purchase Synthesis` content inline in chat, matching the content saved to `reports/YYYYMMDD-z-codex-report.md`. Do not respond with only file paths or a short summary. The user should be able to read the final buying report in Codex and immediately ask follow-up questions without opening a report file. It is acceptable that this repeats the saved artifact in the conversation.
+The final response must include the full `购买综合报告 / Final Purchase Synthesis` content inline in chat, matching the content saved to `reports/YYYYMMDD-z-purchase-report.md`. Do not respond with only file paths or a short summary. The user should be able to read the final buying report in the conversation and immediately ask follow-up questions without opening a report file. It is acceptable that this repeats the saved artifact in the conversation.
 
 Use the four deliverables above as the main structure. The first three should feel like the historical reports in `reports/20260419-z-digest.md`, `reports/20260419-z-roaster-digest.md`, and `reports/20260419-z-new-digest.md`: detailed, explanatory, and comfortable with longer markdown. The fourth should also be report-like, detailed, and conversational. It should guide the user toward a purchase while preserving room for follow-up questions:
 
 - `本期速览`: open the report with at most three actionable items for this session (the most urgent buy windows, watchlist hits, or the single strongest fit), so a reader who stops after three lines still gets the session's point. Everything else elaborates.
-- `总体判断`: what the three digests imply, framed as a scouting map rather than a final checkout decision. Avoid "Codex has chosen X" language.
+- `总体判断`: what the three digests imply, framed as a scouting map rather than a final checkout decision. Avoid "I have chosen X" language.
 - `自上次以来 / Since Last Session`: watchlist hits first (restocked, sold out, price moves), then the catalog delta versus the previous session's catalog and journal-aware "new since last purchase" highlights. Omit this section only when no previous catalog or journal history exists.
 - `烘焙商精品菜单`: default to roughly ten strongest roasters, sorted strongest to weakest for the current buying conversation. For each selected roaster, list at most five coffees, sorted strongest to weakest. Include source URLs, concise evidence, and $/100g alongside `price_label` whenever the size is known. Do not include a roaster merely because it has one mildly interesting coffee; use a short `差点入选 / Near Misses` section for plausible but lower-priority contenders.
 - `按偏好分组的候选`: group standout coffees by likely user preference, such as clean floral, tropical fruit, experimental fermentation, competition/trophy, value, decaf/no-caf, or classic daily drinking. When the journal records taste verdicts, order groups by fit with those verdicts and say so.
 - `可能的购买方向`: suggest several ways the user could narrow toward a one-roaster purchase. These should be routes for discussion, not a declared roaster choice or exact two-bag checkout. Note consumption fit per route (how long the example bags last at the user's cadence). Shipping cost is out of scope; do not track or ask about it.
 - `单品雷达`: exceptional individual coffees that may justify changing the plan or asking a follow-up.
 - `确认事项`: availability, bag size, price, roast date, or scrape uncertainties to verify before checkout.
-- `后续偏好入口`: ask the user for taste preferences or questions that would let Codex adjust the ranking. When the journal has no taste verdicts yet, say explicitly that recording even one or two preferences will roughly halve future menus — the wide cold-start menu is not the permanent format.
+- `后续偏好入口`: ask the user for taste preferences or questions that would let you adjust the ranking. When the journal has no taste verdicts yet, say explicitly that recording even one or two preferences will roughly halve future menus — the wide cold-start menu is not the permanent format.
 
 The fourth report must not use section names like `最终选择`, `首选购买路径`, `我的结论`, or present exactly one top two-bag order as the answer. It must not cap each roaster at two coffees merely because the eventual purchase may be two bags, but it should still cap the normal report to roughly ten roasters and five coffees per selected roaster to avoid overwhelming the user. Two-bag combinations are allowed as examples only after the focused roaster menu is visible, and they should be labeled as examples or narrowing routes, not the decision.
 
@@ -108,6 +119,7 @@ Before finalizing, self-check the fourth report:
 - Does the new-products logic distinguish available new products from `is_new` products that are currently storefront-unavailable?
 - Did it read `purchase-journal.md`, check every watchlist item, calibrate to recorded verdicts, and include the `自上次以来` delta when history exists?
 - Do purchase routes note consumption fit against the monthly cadence, without bringing in shipping cost?
+- Is the report free of agent or vendor branding in its section names and artifact names?
 
 Also scan the first three digest artifacts before finalizing. If they overuse "two bags" as a structural conclusion, rewrite that language as broader ranked menus, shortlist maps, or preference routes.
 

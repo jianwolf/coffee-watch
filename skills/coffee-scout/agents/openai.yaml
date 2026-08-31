@@ -1,6 +1,0 @@
-interface:
-  display_name: "Coffee Scout"
-  short_description: "Scrape Coffee Watch and rank coffee menus"
-  default_prompt: "Use $coffee-scout to scrape Coffee Watch, write the three Chinese digests, then produce a detailed roaster-by-roaster coffee menu report for follow-up."
-policy:
-  allow_implicit_invocation: true

@@ -22,6 +22,9 @@ dist/
 .env
 .env.*
 
+# Agent local settings (the committed .claude/skills symlink is not ignored)
+.claude/settings.local.json
+
 # Local data/logs/reports (generated)
 data/*
 logs/*

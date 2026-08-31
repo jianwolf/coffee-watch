@@ -2,19 +2,21 @@
 
 [![CI](https://github.com/jianwolf/coffee-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/jianwolf/coffee-watch/actions/workflows/ci.yml)
 
-Coffee Watch is a Codex-operated coffee scouting workflow for a home coffee buyer. Codex runs the bundled `coffee-scout` skill, which scrapes roaster catalogs, writes normalized JSON evidence, saves markdown digests, and produces an interactive Chinese buying report that ranks standout coffees by roaster for follow-up discussion. The report is a scouting menu, not a final checkout decision.
+Coffee Watch is an agent-operated coffee scouting workflow for a home coffee buyer. Your coding agent runs the bundled `coffee-scout` skill, which scrapes roaster catalogs, writes normalized JSON evidence, saves markdown digests, and produces an interactive Chinese buying report that ranks standout coffees by roaster for follow-up discussion. The report is a scouting menu, not a final checkout decision.
+
+The skill is agent-independent: the same `SKILL.md` runs in [Codex](https://developers.openai.com/codex), [Claude Code](https://code.claude.com/docs), and [Cursor](https://cursor.com/docs) with no per-agent variant. See [Agent Setup](#agent-setup).
 
 Current workflow:
 
 ```text
-Codex Coffee Scout
+Coffee Scout skill (any agent)
   -> polite roaster scraping
   -> normalized JSON catalogs and status files
   -> markdown digest reports
   -> interactive buying recommendations
 ```
 
-The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen tracking, catalog normalization, and source URL preservation. Coffee analysis and purchase reasoning happen in Codex through `skills/coffee-scout`.
+The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen tracking, catalog normalization, and source URL preservation. Coffee analysis and purchase reasoning happen in the agent through `.agents/skills/coffee-scout`.
 
 ## Highlights
 
@@ -24,8 +26,8 @@ The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen
 - SQLite first-seen tracking in `logs/seen_products.db`
 - Normalized per-roaster and combined catalog JSON outputs
 - Structured status sidecars for resume/retry behavior
-- Repo-local `skills/coffee-scout` skill for interactive buying analysis
-- Codex-written Chinese markdown digests and a final purchase report under `reports/`
+- Repo-local `coffee-scout` skill for interactive buying analysis, shared by Codex, Claude Code, and Cursor
+- Agent-written Chinese markdown digests and a final purchase report under `reports/`
 - Config validation, structured logging, and pytest coverage
 
 ## How It Works
@@ -34,7 +36,7 @@ The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen
 2. Fetch product lists and, when needed, product pages with robots compliance and retry/backoff.
 3. Track first-seen products in SQLite and classify products as new within the current 7-day window.
 4. Write per-roaster catalog JSON plus combined run-level JSON.
-5. Use the `coffee-scout` skill in Codex to write the three digest markdown files plus a final report that ranks standout coffees by roaster and invites follow-up preferences.
+5. Use the `coffee-scout` skill in your agent to write the three digest markdown files plus a final report that ranks standout coffees by roaster and invites follow-up preferences.
 
 ## Code Structure
 
@@ -58,8 +60,34 @@ The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen
 - `coffee_watch/reporting.py` - JSON output helpers and assets retention pruning
 - `coffee_watch/logging_utils.py` - text/JSON logging setup
 - `coffee_watch/seen_products.py` - SQLite first-seen tracker
-- `skills/coffee-scout/` - Codex skill for interactive coffee analysis
+- `.agents/skills/coffee-scout/` - cross-vendor agent skill for interactive coffee analysis
 - `tests/` - pytest coverage
+
+## Agent Setup
+
+The skill body lives once, at `.agents/skills/coffee-scout/SKILL.md`. Each agent picks it
+up from a location it already scans, so a fresh clone needs no configuration:
+
+| Agent | Reads the skill from | Reads repo guidance from |
+| :--- | :--- | :--- |
+| Codex | `.agents/skills/` (scanned to the repo root) | `AGENTS.md` |
+| Cursor | `.agents/skills/` (also supports `.cursor/skills/`) | `AGENTS.md` |
+| Claude Code | `.claude/skills/coffee-scout` -> symlink to `.agents/skills/coffee-scout` | `CLAUDE.md`, which imports `AGENTS.md` |
+
+Nothing in the skill depends on a particular agent, model, or vendor tool. Model choice is
+yours - Codex with GPT models, Claude Code with Claude models, Cursor with Grok 4.6 or
+anything else it offers. Optional features such as subagents are used when available and
+skipped inline when they are not.
+
+Verify the wiring after cloning:
+
+```bash
+pytest -q tests/test_agent_portability.py
+```
+
+On Windows, git needs symlink support for the Claude Code entry point. Either run
+`git config --global core.symlinks true` before cloning, or replace
+`.claude/skills/coffee-scout` with a copy of `.agents/skills/coffee-scout`.
 
 ## Installation
 
@@ -75,9 +103,9 @@ Editable install with dev tooling:
 pip install -e .[dev]
 ```
 
-## Normal Codex Usage
+## Normal Usage
 
-For the intended workflow, ask Codex to use `skills/coffee-scout`. Codex should run the scraper, request network approval if the sandbox blocks DNS/HTTP access, write the digest markdown files in `reports/`, and then present the interactive Chinese buying report.
+For the intended workflow, ask your agent to use `coffee-scout` (or invoke it directly: `$coffee-scout` in Codex and Cursor, `/coffee-scout` in Claude Code). The agent should run the scraper, request network approval if the sandbox blocks DNS/HTTP access, write the digest markdown files in `reports/`, and then present the interactive Chinese buying report.
 
 ## Manual Scraper Usage
 
@@ -181,10 +209,10 @@ Generated local outputs include:
 - `reports/YYYYMMDD-catalog.json` - combined run catalog
 - `reports/YYYYMMDD-new-products.json` - flattened new-product subset
 - `reports/YYYYMMDD-<roaster-slug>.status.json` - structured roaster scrape status
-- `reports/YYYYMMDD-z-digest.md` - Codex all-roaster digest
-- `reports/YYYYMMDD-z-roaster-digest.md` - Codex roaster scorecard digest
-- `reports/YYYYMMDD-z-new-digest.md` - Codex new-product digest
-- `reports/YYYYMMDD-z-codex-report.md` - Codex final interactive purchase report
+- `reports/YYYYMMDD-z-digest.md` - all-roaster digest
+- `reports/YYYYMMDD-z-roaster-digest.md` - roaster scorecard digest
+- `reports/YYYYMMDD-z-new-digest.md` - new-product digest
+- `reports/YYYYMMDD-z-purchase-report.md` - final interactive purchase report
 - `logs/assets/` - raw/pretty source payload cache, always written and pruned after `assets_retention_days`; the `save_raw_products_json`/`save_pretty_products_json` flags control extra copies in `reports/`
 - `logs/coffee_watch.log` - text or JSON log output
 - `logs/seen_products.db` - SQLite seen-product store (kept indefinitely; it is the first-seen source of truth)
@@ -197,7 +225,7 @@ Product entries include fields such as roaster, product URL, title, selected buy
 
 ## Coffee Scout Skill
 
-The repo includes `skills/coffee-scout`, a Codex skill for running the scraper and analyzing the fresh JSON. This system is intentionally designed for Codex to operate end to end: Codex runs `python scrape_coffee.py`, handles sandbox/network approval if needed, reads the fresh catalog JSON, writes markdown digest artifacts, and then presents an interactive Chinese buying report.
+The repo includes `coffee-scout`, a skill for running the scraper and analyzing the fresh JSON. This system is intentionally designed for an agent to operate end to end: the agent runs `python scrape_coffee.py`, handles sandbox/network approval if needed, reads the fresh catalog JSON, writes markdown digest artifacts, and then presents an interactive Chinese buying report.
 
 The skill uses preferences stated in the current conversation, so the first answer can be a focused shortlist and follow-up questions can refine it. The practical consumer context is a home purchase that may end with one roaster and about two bags, but the report should first give enough ranked menu information for the user to steer the next question without forcing every roaster into a two-bag bundle or overwhelming the user with every plausible option.
 
@@ -206,7 +234,7 @@ The skill produces four report surfaces:
 - all-roaster digest
 - roaster scorecard digest
 - new-product digest
-- final Codex purchase report with a focused roaster shortlist, ranked coffee highlights, near misses, and preference-based narrowing suggestions
+- final purchase report with a focused roaster shortlist, ranked coffee highlights, near misses, and preference-based narrowing suggestions
 
 The skill treats scraped product text as untrusted evidence. It should not follow instructions embedded in roaster descriptions.
 

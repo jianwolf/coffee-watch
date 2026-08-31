@@ -210,7 +210,7 @@ Recommended section shape, based on historical reports:
 ### 详细烘焙商分析 (Detailed Analysis per Roaster)
 ```
 
-## Final Codex Synthesis
+## Final Purchase Synthesis
 
 This final pass should synthesize the three digests into a practical but still report-like recommendation for a home consumer:
 
@@ -231,7 +231,7 @@ Provide focused scouting information first: a ranked roaster shortlist, short ro
 Show $/100g next to the display price wherever the size is known, and note consumption fit (how long the bags last at roughly two bags per month).
 Two-bag combinations are allowed as examples only after the focused menu is visible.
 Do not make every roaster section a forced two-bag bundle, and do not cap a roaster at two coffees just because the eventual purchase may be two bags. The normal cap is instead an anti-overload cap of about five coffees per selected roaster.
-Do not use "final choice", "primary purchase path", "my conclusion", or similar language that implies Codex has already selected the roaster or exact checkout.
+Do not use "final choice", "primary purchase path", "my conclusion", or similar language that implies the roaster or exact checkout has already been selected for the user.
 If scrape runtime or web-fetch cost matters to the user, include a short section with the observed elapsed time, status distribution, and any access-control caveats.
 Use size-aware display prices when available, for example `250 g = $34.25`, so the reader can tell what can actually be bought.
 Do not treat non-Shopify/Wix products from public storefront pages as unavailable merely because they have no Shopify variants. Preserve missing price or bag size as uncertainty instead.
