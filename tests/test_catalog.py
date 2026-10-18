@@ -601,6 +601,17 @@ def test_catalog_product_stops_notes_at_next_spec_field():
     assert item["origin"] == "El Paraiso, Cauca, Colombia"
 
 
+def test_catalog_product_stops_notes_at_a_glued_spec_field():
+    # Stripping block-level tags can leave no space at all between the last
+    # note and the next label, so the boundary cannot require whitespace.
+    item = _catalog_item(
+        "Tasting Notes: Elderflower, Blueberry, SweetOrigin: Ethiopia - Bona Zuria, "
+        "SidamaFarm: 158Sourced By: Swift"
+    )
+
+    assert item["tasting_notes"] == ["Elderflower", "Blueberry", "Sweet"]
+
+
 def test_catalog_product_stops_notes_at_components_field():
     item = _catalog_item(
         "Tasting Notes: Berry, Chocolate, Creamy Current Components: 60% Washed Colombia"
