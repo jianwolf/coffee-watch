@@ -378,7 +378,15 @@ async def fetch_products_for_roaster(
     limiter: PerHostLimiter | None,
     log: logging.Logger,
     denylist: set[str] | None = None,
+    diagnostics: list[str] | None = None,
 ) -> list[ProductCandidate]:
+    """Fetch a roaster's catalog.
+
+    ``diagnostics``, when given, collects why a fetch produced nothing. An
+    empty result otherwise reaches the reader as 'no products parsed', which
+    is both wrong and useless when the truth is a 429 at the catalog API:
+    nothing was ever fetched to parse.
+    """
     max_products = roaster.max_products or settings.max_products_per_source
     pagination = roaster.pagination or PaginationConfig(max_pages=1)
     stop_on_empty = pagination.stop_on_empty
@@ -431,6 +439,8 @@ async def fetch_products_for_roaster(
         )
         if response is None:
             log.warning("Request failed for %s", products_url)
+            if diagnostics is not None:
+                diagnostics.append("catalog request failed (no response)")
             if stop_on_empty:
                 break
             continue
@@ -438,6 +448,13 @@ async def fetch_products_for_roaster(
             log.warning(
                 "Non-200 response %s for %s", response.status_code, products_url
             )
+            if diagnostics is not None:
+                reason = (
+                    "blocked by sandbox egress policy"
+                    if response.headers.get(PROXY_DENY_HEADER)
+                    else f"catalog API returned HTTP {response.status_code}"
+                )
+                diagnostics.append(reason)
             if stop_on_empty:
                 break
             continue

@@ -40,6 +40,10 @@ from .seen_products import SeenProducts
 EMPTY_RUN_EXIT_CODE = 3
 
 
+def _elapsed_since(started_at: float) -> float:
+    return time.monotonic() - started_at if started_at else 0.0
+
+
 def _report_coverage(
     products: int,
     roaster_count: int,
@@ -128,6 +132,7 @@ def _write_run_catalogs(
     roaster_catalogs: list[dict[str, Any]],
     failed_roasters: list[str],
     log: logging.Logger,
+    elapsed_s: float = 0.0,
 ) -> tuple[int, int]:
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     combined = build_combined_catalog(
@@ -137,6 +142,7 @@ def _write_run_catalogs(
         denylist_path=str(settings.denylist_path),
         roaster_catalogs=roaster_catalogs,
         failed_roasters=failed_roasters,
+        elapsed_s=elapsed_s,
     )
     combined_path = save_json(
         combined_catalog_path(settings.reports_dir, run_id),
@@ -158,6 +164,7 @@ def _write_run_catalogs(
 async def _run_resume(
     ctx: RunContext,
     roasters: list[RoasterSource],
+    started_at: float = 0.0,
 ) -> int:
     settings = ctx.settings
     log = ctx.logger
@@ -186,7 +193,7 @@ async def _run_resume(
         )
     failed = merge_failed_roaster_names(failed_roasters, missing_roasters)
     products, _new_products = _write_run_catalogs(
-        settings, ctx.run_id, catalogs, failed, log
+        settings, ctx.run_id, catalogs, failed, log, _elapsed_since(started_at)
     )
     return _report_coverage(products, len(roasters), failed, log)
 
@@ -194,6 +201,7 @@ async def _run_resume(
 async def _run_full(
     ctx: RunContext,
     roasters: list[RoasterSource],
+    started_at: float = 0.0,
 ) -> int:
     results, failed_roasters = await _run_roasters(ctx, roasters)
     catalogs = [result.catalog for result in results if result.catalog]
@@ -201,7 +209,12 @@ async def _run_full(
         ctx.logger.error("No roaster catalogs were written for %s.", ctx.run_id)
         return 1
     products, _new_products = _write_run_catalogs(
-        ctx.settings, ctx.run_id, catalogs, failed_roasters, ctx.logger
+        ctx.settings,
+        ctx.run_id,
+        catalogs,
+        failed_roasters,
+        ctx.logger,
+        _elapsed_since(started_at),
     )
     return _report_coverage(products, len(roasters), failed_roasters, ctx.logger)
 
@@ -256,9 +269,9 @@ async def run(settings: Settings) -> int:
                 assets_dir=settings.assets_dir,
             )
             if settings.resume:
-                exit_code = await _run_resume(ctx, roasters)
+                exit_code = await _run_resume(ctx, roasters, t_start)
             else:
-                exit_code = await _run_full(ctx, roasters)
+                exit_code = await _run_full(ctx, roasters, t_start)
     finally:
         seen_products.close()
 

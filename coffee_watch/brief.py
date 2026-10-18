@@ -18,6 +18,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,10 @@ class Delta:
     sold_out: list[str] = field(default_factory=list)
     restocked: list[str] = field(default_factory=list)
     price_moved: list[str] = field(default_factory=list)
+    # The displayed variant changed tier: the label moves, the price did not.
+    size_changed: list[str] = field(default_factory=list)
+    # Same roaster and title at a new URL: a re-slug, not a new coffee.
+    relisted: list[str] = field(default_factory=list)
     # Roasters that returned nothing in one of the two runs. Their coffees
     # cannot be compared at all: missing now is not a sell-out, and missing
     # before is not a new listing.
@@ -147,8 +152,12 @@ def _variants(product: dict[str, Any]) -> list[dict[str, Any]]:
 def selected_grams(product: dict[str, Any]) -> int:
     """Weight of the variant the catalog chose for display pricing.
 
-    Prefers the matching variant's API grams, then a parse of the variant
-    title, so a stale API weight on a titled variant does not win.
+    The variant title wins. Shopify's `grams` is only trusted where the catalog
+    already vouched for it (`price_source=variant_api_grams`, a placeholder
+    title with a plausible weight), because it is otherwise unreliable in both
+    directions: Proud Mary stamps 380 g on a 250 g bag, and a three-bag bundle
+    carries its 900 g total. An unknown weight has to stay unknown -- a wrong
+    $/100g is worse than a missing one.
     """
     label = str(product.get("price_variant") or "").strip()
     if not label:
@@ -156,11 +165,12 @@ def selected_grams(product: dict[str, Any]) -> int:
     from_title = grams_from_size_label(label)
     if from_title:
         return from_title
+    if product.get("price_source") != "variant_api_grams":
+        return 0
     for variant in _variants(product):
-        if str(variant.get("title") or "").strip() == label:
-            grams = variant.get("grams")
-            if isinstance(grams, int) and grams > 0:
-                return grams
+        grams = variant.get("grams")
+        if isinstance(grams, int) and grams > 0:
+            return grams
     return 0
 
 
@@ -199,7 +209,7 @@ def product_flags(product: dict[str, Any]) -> tuple[str, ...]:
     elif availability != "available":
         flags.append("avail?")
     if product.get("storefront_status") == "storefront_unavailable":
-        flags.append("page-gone")
+        flags.append("page-blocked")
     if is_bulk_only(product):
         flags.append("BULK-ONLY")
     source = str(product.get("price_source") or "")
@@ -207,6 +217,8 @@ def product_flags(product: dict[str, Any]) -> tuple[str, ...]:
         flags.append("size-verified")
     elif source == "variant_api_grams":
         flags.append("size-from-api")
+    elif source == "variant":
+        flags.append("size-unverified")
     elif not product.get("price_variant"):
         flags.append("size?")
     if product.get("errors"):
@@ -333,11 +345,23 @@ def compute_delta(current: dict[str, Any], previous: dict[str, Any]) -> Delta:
         old_price = _price_value(was)
         new_price = _price_value(product)
         if old_price > 0 and new_price > 0 and abs(new_price - old_price) >= 0.01:
-            direction = "up" if new_price > old_price else "down"
-            delta.price_moved.append(
-                f"{label(product)} | {was.get('price_label')} -> "
-                f"{product.get('price_label')} ({direction}) | {url}"
-            )
+            # Only a like-for-like comparison is a price move. When the
+            # displayed variant changed tier -- a 40 g sample giving way to a
+            # 250 g bag -- the label triples and nothing was repriced.
+            if str(was.get("price_variant") or "") == str(
+                product.get("price_variant") or ""
+            ):
+                direction = "up" if new_price > old_price else "down"
+                delta.price_moved.append(
+                    f"{label(product)} | {was.get('price_label')} -> "
+                    f"{product.get('price_label')} ({direction}) | {url}"
+                )
+            else:
+                delta.size_changed.append(
+                    f"{label(product)} | {was.get('price_label')} -> "
+                    f"{product.get('price_label')} (different size, not a price "
+                    f"change) | {url}"
+                )
     for url, product in sorted(before.items()):
         if url in now:
             continue
@@ -350,7 +374,42 @@ def compute_delta(current: dict[str, Any], previous: dict[str, Any]) -> Delta:
             continue
         delta.gone.append(f"{label(product)} | {url}")
     delta.unknown_roasters = sorted(unknown)
+    _reconcile_relistings(delta)
     return delta
+
+
+def _reconcile_relistings(delta: Delta) -> None:
+    """Collapse a re-slugged product counted as both gone and newly listed.
+
+    Roasters re-slug a standing coffee at season rollover
+    (``/kambarare-washed-process-2026`` becoming ``-2025``). Keyed by URL
+    that is one disappearance plus one arrival, which inflates both halves of
+    the headline and invents new arrivals that are not new.
+    """
+    gone_by_label = {item.split(" | ")[0]: item for item in delta.gone}
+    if not gone_by_label:
+        return
+    still_listed = []
+    for item in delta.listed:
+        name = item.split(" | ")[0]
+        if name in gone_by_label:
+            delta.relisted.append(f"{item} (same title at a new URL)")
+            delta.gone.remove(gone_by_label.pop(name))
+            continue
+        still_listed.append(item)
+    delta.listed = still_listed
+
+
+def _run_gap_days(current_run_id: str, previous_run_id: str) -> str:
+    """How stale the baseline is. A monthly reader reads any delta as 'since
+    last time', so an old baseline has to say its age."""
+    try:
+        now = datetime.strptime(current_run_id, "%Y%m%d")
+        before = datetime.strptime(previous_run_id, "%Y%m%d")
+    except ValueError:
+        return ""
+    days = (now - before).days
+    return f" ({days} days earlier)" if days else " (same day)"
 
 
 def _roaster_header(entry: dict[str, Any], rows: int) -> str:
@@ -384,8 +443,10 @@ def coverage(catalog: dict[str, Any]) -> list[str]:
         empty.append(f"{entry.get('name')} ({reason})")
     total = len(roasters)
     with_products = total - len(empty)
+    elapsed = summary.get("elapsed_s")
+    took = f", took {elapsed}s" if elapsed else ""
     lines = [
-        f"run: {catalog.get('run_id')} generated {catalog.get('generated_at')}",
+        f"run: {catalog.get('run_id')} generated {catalog.get('generated_at')}{took}",
         f"coverage: {with_products}/{total} roasters returned products; "
         f"{summary.get('products', 0)} products, {summary.get('new_products', 0)} flagged is_new",
     ]
@@ -433,10 +494,13 @@ def render_brief(
         )
     else:
         delta = compute_delta(catalog, previous)
+        age = _run_gap_days(str(catalog.get("run_id") or ""), delta.previous_run_id)
         lines.append(
-            f"delta vs {delta.previous_run_id}: {len(delta.listed)} newly listed, "
-            f"{len(delta.gone)} gone, {len(delta.sold_out)} sold out, "
-            f"{len(delta.restocked)} restocked, {len(delta.price_moved)} price moves"
+            f"delta vs {delta.previous_run_id}{age}: {len(delta.listed)} newly "
+            f"listed, {len(delta.gone)} gone, {len(delta.sold_out)} sold out, "
+            f"{len(delta.restocked)} restocked, {len(delta.price_moved)} price "
+            f"moves, {len(delta.relisted)} relisted, {len(delta.size_changed)} "
+            f"size swaps"
         )
         if delta.unknown_products:
             lines.append(
@@ -451,6 +515,8 @@ def render_brief(
             ("sold out", delta.sold_out),
             ("restocked", delta.restocked),
             ("price moves", delta.price_moved),
+            ("relisted (same coffee, new URL)", delta.relisted),
+            ("size swaps (displayed variant changed, not the price)", delta.size_changed),
         ):
             if not items:
                 continue

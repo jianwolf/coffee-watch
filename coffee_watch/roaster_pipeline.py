@@ -529,6 +529,7 @@ async def _process_roaster_inner(
             path,
         )
 
+    fetch_diagnostics: list[str] = []
     products = await fetch_products_for_roaster(
         ctx.http_client,
         roaster,
@@ -539,9 +540,11 @@ async def _process_roaster_inner(
         ctx.limiter,
         log,
         denylist=ctx.denylist,
+        diagnostics=fetch_diagnostics,
     )
     if not products:
-        log.info("No products parsed for %s", roaster.name)
+        reason = "; ".join(dict.fromkeys(fetch_diagnostics)) or "no products parsed"
+        log.info("No products for %s: %s", roaster.name, reason)
         status = RoasterRunStatus(
             roaster=roaster.name,
             run_id=run_id,
@@ -553,7 +556,7 @@ async def _process_roaster_inner(
             fetched_pages=0,
             platform=roaster.platform,
             completed_at=utc_now_iso(),
-            note="no products parsed",
+            note=reason,
         )
         return _write_catalog_and_status(ctx, roaster, status, [], [], path)
 

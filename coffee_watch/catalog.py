@@ -394,6 +394,7 @@ def build_combined_catalog(
     denylist_path: str,
     roaster_catalogs: list[dict[str, Any]],
     failed_roasters: list[str],
+    elapsed_s: float = 0.0,
 ) -> dict[str, Any]:
     products = [
         product
@@ -425,6 +426,9 @@ def build_combined_catalog(
             "products": len(products),
             "new_products": sum(1 for product in products if product.get("is_new")),
             "failed_roasters": failed_roasters,
+            # The reply has to show what the run cost; reading it off the
+            # catalog beats grepping a log that a fresh clone may not have.
+            "elapsed_s": round(elapsed_s, 1),
         },
         "roasters": roasters,
         "products": products,

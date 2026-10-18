@@ -88,6 +88,46 @@ def test_title_weight_wins_over_a_stale_api_gram_value():
     assert brief.selected_grams(product) == 907
 
 
+def test_an_unparseable_title_yields_no_weight_rather_than_a_wrong_one():
+    """Shopify `grams` is wrong in both directions, so an unvouched weight is dropped.
+
+    Proud Mary stamps 380 g on a 250 g bag, and a three-bag bundle carries its
+    900 g total; either would print a confident, wrong $/100g.
+    """
+    bundle = _product(
+        title="Pic'n'Mix",
+        price="45.90",
+        price_variant="Angel Wings / Angel Wings / Angel Wings",
+        price_source="variant",
+        variants=[
+            {
+                "title": "Angel Wings / Angel Wings / Angel Wings",
+                "price": "45.90",
+                "grams": 900,
+                "available": True,
+            }
+        ],
+    )
+    assert brief.selected_grams(bundle) == 0
+    assert brief.per_100g(bundle) == ""
+
+
+def test_a_gms_spelled_title_is_parsed_rather_than_trusted_to_the_api():
+    # "250gms / Whole Bean" with an API weight of 380 g printed $5.79/100g
+    # instead of $8.80 until the parser learned this spelling.
+    product = _product(
+        price="22.00",
+        price_variant="250gms / Whole Bean",
+        price_source="variant",
+        variants=[
+            {"title": "250gms / Whole Bean", "price": "22.00", "grams": 380, "available": True}
+        ],
+    )
+    assert brief.selected_grams(product) == 250
+    assert brief.per_100g(product) == "$8.80/100g"
+    assert "size-unverified" in brief.product_flags(product)
+
+
 def test_api_grams_fill_in_for_a_placeholder_titled_variant():
     product = _product(
         price_variant="250 g",
@@ -124,11 +164,11 @@ def test_a_store_that_only_sells_wholesale_is_not_bulk_only():
 
 def test_flags_mark_unbuyable_products():
     assert "SOLD-OUT" in brief.product_flags(_product(availability="unavailable"))
-    assert "page-gone" in brief.product_flags(
+    assert "page-blocked" in brief.product_flags(
         _product(storefront_status="storefront_unavailable")
     )
     # An empty storefront_status is the normal case, not an unknown one.
-    assert "page-gone" not in brief.product_flags(_product())
+    assert "page-blocked" not in brief.product_flags(_product())
 
 
 def test_notes_in_text_flag_points_at_the_page_text():
@@ -215,6 +255,68 @@ def test_delta_reports_listings_sellouts_restocks_and_price_moves():
     assert len(delta.price_moved) == 1 and "(up)" in delta.price_moved[0]
 
 
+def test_a_tier_change_is_not_a_price_move():
+    """A 40 g sample giving way to a 250 g bag tripled the label, not the price."""
+    previous = _catalog(
+        [
+            _product(
+                product_url="https://example.com/a",
+                price="8.00",
+                price_variant="sample (40-50g)",
+                price_label="sample (40-50g) = $8.00",
+            )
+        ],
+        run_id="20261001",
+    )
+    current = _catalog(
+        [
+            _product(
+                product_url="https://example.com/a",
+                price="28.00",
+                price_variant="250 g",
+                price_label="250 g = $28.00",
+            )
+        ]
+    )
+    delta = brief.compute_delta(current, previous)
+    assert delta.price_moved == []
+    assert len(delta.size_changed) == 1
+    assert "not a price change" in delta.size_changed[0]
+
+
+def test_a_reslugged_coffee_is_not_one_arrival_plus_one_departure():
+    """Season rollover re-slugs a standing coffee and inflated both headlines."""
+    previous = _catalog(
+        [
+            _product(
+                title="Kambarare - Washed",
+                product_url="https://example.com/kambarare-2026",
+            )
+        ],
+        run_id="20261001",
+    )
+    current = _catalog(
+        [
+            _product(
+                title="Kambarare - Washed",
+                product_url="https://example.com/kambarare-2025",
+            )
+        ]
+    )
+    delta = brief.compute_delta(current, previous)
+    assert delta.listed == []
+    assert delta.gone == []
+    assert len(delta.relisted) == 1
+    assert "same title at a new URL" in delta.relisted[0]
+
+
+def test_the_delta_line_states_how_stale_the_baseline_is():
+    previous = _catalog([_product()], run_id="20260901")
+    current = _catalog([_product()], run_id="20261018")
+    text = brief.render_brief(current, previous=previous)
+    assert "delta vs 20260901 (47 days earlier)" in text
+
+
 def test_a_roaster_that_returned_nothing_is_unknown_not_gone():
     """The 2026-10-18 escalation: a gated roaster must not look sold out."""
     previous = _catalog(
@@ -278,6 +380,23 @@ def test_coverage_names_every_empty_roaster():
     lines = "\n".join(brief.coverage(catalog))
     assert "1/2 roasters returned products" in lines
     assert "EMPTY (1): Gated" in lines
+    # The reason is the roaster status note, so an HTTP cause reaches the reply
+    # instead of a bare "no products parsed".
+    assert "no products parsed" in lines
+
+
+def test_coverage_reports_the_http_cause_and_elapsed_time():
+    catalog = _catalog(
+        [],
+        roasters=[
+            {"name": "Gated", "status": {"note": "catalog API returned HTTP 429"},
+             "summary": {"products_found": 0, "new_products": 0}, "errors": []},
+        ],
+    )
+    catalog["summary"]["elapsed_s"] = 125.6
+    lines = "\n".join(brief.coverage(catalog))
+    assert "took 125.6s" in lines
+    assert "HTTP 429" in lines, "the reply has to name why a roaster was empty"
 
 
 def test_render_brief_is_compact_and_states_missing_history():
