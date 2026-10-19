@@ -213,7 +213,11 @@ def product_flags(product: dict[str, Any]) -> tuple[str, ...]:
     if is_bulk_only(product):
         flags.append("BULK-ONLY")
     source = str(product.get("price_source") or "")
-    if source == "visible_variant":
+    if source == "atom_feed":
+        # The feed quotes a price range and no stock flag, so neither the
+        # size nor the availability on this row was ever established.
+        flags.append("ATOM-ONLY-no-size-or-stock")
+    elif source == "visible_variant":
         flags.append("size-verified")
     elif source == "variant_api_grams":
         flags.append("size-from-api")
@@ -450,6 +454,23 @@ def coverage(catalog: dict[str, Any]) -> list[str]:
         f"coverage: {with_products}/{total} roasters returned products; "
         f"{summary.get('products', 0)} products, {summary.get('new_products', 0)} flagged is_new",
     ]
+    atom_rows = sum(
+        1 for product in _products(catalog) if product.get("price_source") == "atom_feed"
+    )
+    if atom_rows:
+        lines.append(
+            f"atom fallback: {atom_rows} row(s) came from a collection Atom feed "
+            f"because the catalog API never allowed that roaster. They carry NO "
+            f"per-variant size, price or stock, so no $/100g and availability is "
+            f"unknown - do not present them as purchasable sizes, and the feed is "
+            f"capped at each roaster's newest 25 products"
+        )
+    second = _mapping(summary.get("second_pass"))
+    if second.get("retried"):
+        lines.append(
+            f"second pass: {second.get('recovered', 0)} of {second['retried']} "
+            f"rate-limited roaster(s) recovered after a cooldown"
+        )
     if empty:
         lines.append(f"EMPTY ({len(empty)}): " + "; ".join(empty))
     failed = summary.get("failed_roasters") or []

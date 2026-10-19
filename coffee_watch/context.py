@@ -28,3 +28,6 @@ class RunContext:
     # Hosts that 429 every page request are fast-skipped for the whole run
     # (docs/shopify-bot-gating.md); page fetches share this tracker.
     page_gate: Host429Gate = field(default_factory=Host429Gate)
+    # Off for the catalog passes, on only for the final fallback pass, so a
+    # gated roaster spends its full attempts on real variant data first.
+    atom_fallback: bool = False

@@ -541,6 +541,7 @@ async def _process_roaster_inner(
         log,
         denylist=ctx.denylist,
         diagnostics=fetch_diagnostics,
+        allow_atom=ctx.atom_fallback,
     )
     if not products:
         reason = "; ".join(dict.fromkeys(fetch_diagnostics)) or "no products parsed"

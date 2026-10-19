@@ -35,9 +35,12 @@ is committed, namely `purchase-journal.md` - read it first, every run.
    not to scrape - in which case skip to step 4 and take coverage from the
    brief's own header, not from an exit code or a log that may belong to a
    different run:
-   `python scrape_coffee.py --run-deadline-s 600`
-   It normally takes 2-9 minutes, so give the command a long timeout or run it
-   in the background; a five-minute scrape is not hung. Widen the new-product
+   `python scrape_coffee.py --run-deadline-s 1200`
+   The full chain - first pass, up to two cooldown retries for rate-limited
+   roasters, then the Atom feed for whoever never answered - measured 684s and
+   reached 17/17. Give the command a long timeout or run it in the background;
+   a ten-minute scrape is not hung, and a smaller budget silently skips the
+   later passes. Widen the new-product
    window with `--new-window-days N` when the user's last session was longer ago
    than a week.
 3. **Check the exit code.** `3` means the run collected zero products: the
@@ -102,6 +105,14 @@ The brief's flags are mechanical, not verdicts. What they mean for buying:
   enough to mark in the reply (`250 g（API 标重）`). A row with no size flag at
   all had no parseable weight, which is also why it has no `$/100g`: do not
   compute one yourself.
+- **`ATOM-ONLY-no-size-or-stock` is a discovery-only row.** That roaster's
+  catalog API never answered, so the product came from its published Atom
+  feed: the title, link, listing date and flavor text are real, but the price
+  is the bottom of a range, no size was established and stock is unknown. You
+  may mention such a coffee as something that turned up, never as a
+  purchasable size, and say the size and stock need checking. The feed is
+  capped at each roaster's newest 25, so their older stock is simply absent -
+  do not read that as sold out.
 - **`$/100g` only compares within a tier.** A 100 g trophy bag is a different
   product from a 250 g daily bag, not an overpriced version of it. Note how long
   the bags last at roughly two bags a month.

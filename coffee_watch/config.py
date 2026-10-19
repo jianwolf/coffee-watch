@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,10 @@ class Settings:
     http_timeout_s: float
     http_total_timeout_s: float
     run_deadline_s: float
+    retry_rate_limited_roasters: bool
+    retry_cooldown_s: float
+    retry_max_passes: int
+    atom_fallback: bool
     http_max_response_bytes: int
     http_max_retries: int
     jitter_min_s: float
@@ -60,6 +65,12 @@ class Settings:
             issues.append("http_total_timeout_s must be >= 0 (0 disables the deadline)")
         if self.run_deadline_s < 0:
             issues.append("run_deadline_s must be >= 0 (0 disables the deadline)")
+        if self.retry_cooldown_s < 0 or not math.isfinite(self.retry_cooldown_s):
+            issues.append("retry_cooldown_s must be a finite value >= 0")
+        if not math.isfinite(self.run_deadline_s):
+            issues.append("run_deadline_s must be finite")
+        if self.retry_max_passes < 0:
+            issues.append("retry_max_passes must be >= 0 (0 disables retrying)")
         if self.http_max_response_bytes < 0:
             issues.append("http_max_response_bytes must be >= 0 (0 disables the cap)")
         if self.http_max_retries < 0:
@@ -95,6 +106,10 @@ class Settings:
             http_timeout_s=20.0,
             http_total_timeout_s=120.0,
             run_deadline_s=0.0,
+            retry_rate_limited_roasters=True,
+            retry_cooldown_s=120.0,
+            retry_max_passes=1,
+            atom_fallback=True,
             http_max_response_bytes=10_000_000,
             http_max_retries=2,
             jitter_min_s=0.7,
@@ -159,6 +174,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--retry-max-passes",
+        type=int,
+        help=(
+            "How many cooldown retry passes a rate-limited roaster may get in "
+            "one run (default 1). Each pass costs http_max_retries+1 catalog "
+            "requests per host, so raising this makes the run ask a refusing "
+            "host noticeably more; the loop stops as soon as a pass recovers "
+            "nothing."
+        ),
+    )
+    parser.add_argument(
+        "--retry-cooldown-s",
+        type=float,
+        help=(
+            "Seconds to wait before a second attempt at roasters whose catalog "
+            "API rate-limited us (default 120). Only runs inside a declared "
+            "--run-deadline-s budget."
+        ),
+    )
+    parser.add_argument(
         "--http-max-response-bytes",
         type=int,
         help="Max HTTP response body size in bytes (0 disables the cap)",
@@ -213,6 +248,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser,
         "resume",
         "retry missing/failed roaster catalog outputs for the current UTC day",
+        None,
+    )
+    add_bool_flag(
+        parser,
+        "atom-fallback",
+        "fall back to a collection Atom feed when the catalog API never allows a "
+        "roaster (thinner data: no per-variant size, price or stock)",
+        None,
+    )
+    add_bool_flag(
+        parser,
+        "retry-rate-limited-roasters",
+        "re-attempt roasters whose catalog API rate-limited us, after a cooldown",
         None,
     )
     add_bool_flag(
@@ -340,6 +388,16 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
             "http_total_timeout_s", pick_value("http_total_timeout_s")
         ),
         run_deadline_s=_as_float("run_deadline_s", pick_value("run_deadline_s")),
+        retry_rate_limited_roasters=_as_bool(
+            "retry_rate_limited_roasters", pick_value("retry_rate_limited_roasters")
+        ),
+        retry_cooldown_s=_as_float(
+            "retry_cooldown_s", pick_value("retry_cooldown_s")
+        ),
+        retry_max_passes=_as_int(
+            "retry_max_passes", pick_value("retry_max_passes")
+        ),
+        atom_fallback=_as_bool("atom_fallback", pick_value("atom_fallback")),
         http_max_response_bytes=_as_int(
             "http_max_response_bytes", pick_value("http_max_response_bytes")
         ),

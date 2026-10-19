@@ -27,7 +27,7 @@ Setting up the cloud environment (network allowlist, timeouts, the monthly routi
 - Normalized per-roaster and combined catalog JSON outputs
 - Structured status sidecars for resume/retry behavior
 - Deterministic catalog projection for agent reading, with `$/100g`, wholesale-only detection, republish clustering, and a catalog-to-catalog delta
-- Unattended-run hardening: a whole-run deadline that keeps partial results, a non-zero exit when a run collects nothing, and distinct logging for sandbox egress refusals
+- Unattended-run hardening: a whole-run deadline that keeps partial results, a cooldown retry for rate-limited roasters inside that budget, a non-zero exit when a run collects nothing, and distinct logging for sandbox egress refusals
 - Repo-local `coffee-scout` skill that answers in chat and writes nothing
 - Config validation, structured logging, and pytest coverage
 
@@ -51,6 +51,7 @@ Setting up the cloud environment (network allowlist, timeouts, the monthly routi
 - `coffee_watch/roaster_pipeline.py` - per-roaster scrape, classification, and catalog writing
 - `coffee_watch/catalog.py` - normalized catalog schema helpers
 - `coffee_watch/catalog_parsers.py` - named catalog HTML parsers (e.g. Wix shop pages)
+- `coffee_watch/atom_feed.py` - Shopify collection Atom feed fallback and its limits
 - `coffee_watch/parsing.py` - roaster config loading and product payload parsing
 - `coffee_watch/classify.py` - new-product date resolution
 - `coffee_watch/network.py` - HTTP fetching, retries, robots, sitemaps
@@ -170,6 +171,31 @@ Bound the whole run. Roasters still in flight when the budget expires are cancel
 python scrape_coffee.py --run-deadline-s 600
 ```
 
+Inside that budget, roasters whose catalog API rate-limited us get re-asked after a cooldown, and again while re-asking keeps working. Which stores are gated changes minute to minute, and a full run typically uses a third of its deadline, so the idle remainder pays for the retry. It needs a declared deadline — with none there is no idle remainder to spend, and the pass is skipped rather than making every run longer. The cooldown is a floor, not a remainder: if waiting it out would not leave real working time, the attempt is skipped instead of being sent and cancelled. A host's own `Retry-After` overrides the configured cooldown:
+
+```bash
+python scrape_coffee.py --run-deadline-s 600 --retry-cooldown-s 120
+```
+
+The loop stops at the first pass that recovers nothing: that is the signal that whoever is left is gated rather than throttled, and re-asking a host that has refused every time is what this project's own back-off rule forbids. `--retry-max-passes` (default 2) is the ceiling, the cooldown grows with each pass, and the default 600s budget usually affords one retry pass -- raise the deadline to afford more.
+
+Measured: two runs recovered 4 of 10 rate-limited roasters on the first retry pass, taking coverage from 7/17 to 11/17. A variant that cut each pass to a single request per host recovered 0 of 9 and is not used -- the per-request retries carry their own 30-60s backoffs and appear to be doing the work.
+
+```bash
+python scrape_coffee.py --no-retry-rate-limited-roasters
+```
+
+Only a retryable catalog-API status (429, 5xx) qualifies. A roaster skipped at the robots gate is never retried — honouring `robots.txt` is the point, not an error — and neither is a sandbox egress refusal, which will not change mid-run.
+
+After the retries, a roaster the catalog API never allowed falls back to the collection's Atom feed, which Shopify publishes for the same collection and which these stores' `robots.txt` allows (`User-agent: * / Allow: /`). One request returns the product list with titles, URLs, published dates and the roaster's own tasting-note text. It is a degraded source and the rows say so:
+
+- **No per-variant size, price or stock.** The feed quotes a price *range*, so there is no purchasable size, no `$/100g`, and availability is `unknown` rather than in stock. Rows carry the `ATOM-ONLY-no-size-or-stock` flag and the brief's header repeats the caveat.
+- **The newest 25 products only.** The feed is capped and ignores `?page`, so a large store is truncated. Entries are newest-first, so the cap keeps the window a "what is new" question needs and drops older standing stock.
+
+In practice the subsequent product-page fetch upgrades most feed-discovered coffees to real page-verified sizes; a measured run left only 4 rows feed-only, all of them non-coffee (gift cards, instant, subscriptions). Disable with `--no-atom-fallback`.
+
+Measured end to end: first pass 7/17, retry pass 1 recovered 3, retry pass 2 recovered 2, the feed covered the last 3 — **17/17, 383 products**, in 684s of a 900s budget.
+
 Use an alternate config:
 
 ```bash
@@ -195,6 +221,10 @@ Example `config/settings.json`:
   "http_timeout_s": 20.0,
   "http_total_timeout_s": 120.0,
   "run_deadline_s": 0,
+  "retry_rate_limited_roasters": true,
+  "retry_cooldown_s": 120.0,
+  "retry_max_passes": 2,
+  "atom_fallback": true,
   "http_max_response_bytes": 10000000,
   "http_max_retries": 2,
   "jitter_min_s": 0.7,

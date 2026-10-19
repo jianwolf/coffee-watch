@@ -156,3 +156,24 @@ def test_assets_retention_days_flag_overrides_config():
     )
 
     assert settings.assets_retention_days == 7
+
+
+def test_retry_settings_parse_and_validate():
+    from dataclasses import replace
+
+    import pytest
+
+    from coffee_watch.config import ConfigError, Settings
+
+    defaults = Settings.defaults()
+    assert defaults.retry_rate_limited_roasters is True
+    assert defaults.retry_cooldown_s == 120.0
+
+    with pytest.raises(ConfigError, match="retry_cooldown_s"):
+        replace(defaults, retry_cooldown_s=-1.0)
+    # NaN slid past a bare `< 0` check and then turned the retry's sub-deadline
+    # into "no deadline at all".
+    with pytest.raises(ConfigError, match="retry_cooldown_s"):
+        replace(defaults, retry_cooldown_s=float("nan"))
+    with pytest.raises(ConfigError, match="run_deadline_s must be finite"):
+        replace(defaults, run_deadline_s=float("nan"))
