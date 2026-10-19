@@ -154,19 +154,29 @@ Worth interrupting someone for:
 Those are keywords, and keywords are generous: on a normal catalog a sixth of
 the shelf matches one. They get you a candidate list, not a shortlist.
 
-**Two things rank that list, and nothing else does: how it tastes, and how
-genuinely rare it is.**
+**Rank on evidence of quality, strongest evidence first.** The ordering below
+is by how hard the signal is to fake, not by how good it sounds:
 
-- **Taste evidence is the strongest signal you have.** A description you would
-  quote to someone - "violet, lychee, dragon fruit", "tiki cocktails", "peach
-  rings, limeade, elderflower" - beats one that could describe any coffee
-  ("balanced", "chocolate, nutty, smooth"). Two or more distinctive descriptors
-  is the working bar. Most rows keep their notes in the page text, so pull
-  `--detail` before concluding a coffee has none.
-- **Rarity has to be real, not a keyword match.** A Gesha is not automatically
-  interesting; a Gesha with a documented 28-day temperature-staged dry is. An
-  unusual variety, a process described concretely, or a producer the page makes
-  a case for all count. The word "experimental" on its own does not.
+- **A competition result or third-party placing.** Cup of Excellence, Best of
+  Panama, an auction lot, a national placing. This is blind-cupped by someone
+  other than the seller, which makes it the only quality claim on the page the
+  seller could not simply have written. About 6% of a catalog has one, which is
+  a shortlist by itself. A stated cupping score would rank here too, but in
+  practice no roaster in this config publishes numbers.
+- **A prized variety**, where the variety genuinely carries cup potential:
+  Gesha, Sudan Rume, SL28, Pacamara, Wush Wush, Eugenioides, Laurina.
+- **Traceability depth.** A named producer or single farm, a stated elevation,
+  a specific variety, and a process described with real detail (hours, stages,
+  temperatures). This is structural: a roaster cannot manufacture it with
+  adjectives, and a fully traceable single lot is a better quality proxy than
+  any amount of prose.
+
+**Flavour notes describe, they do not rank.** How vividly a coffee is written up
+measures the roaster's copywriting, not the coffee: some roasters publish a
+spec sheet for everything and others give you three words, and the description
+is written by the person selling it. Use the notes to tell the user what it
+tastes like and to match what they have said they enjoy. Never treat "violet,
+lychee, dragon fruit" as better evidence than "floral, sweet".
 
 **Two things are explicitly not criteria.**
 

@@ -487,3 +487,27 @@ def test_main_renders_the_newest_catalog(tmp_path: Path, capsys):
     out = capsys.readouterr().out
     assert "# coffee-watch brief" in out
     assert "250 g = $24.00" in out
+
+
+def test_a_notes_in_text_row_says_where_the_flavour_is():
+    """"notes: -" read as "no flavour captured" in a real reply.
+
+    A cloud run described a Cup-of-Excellence-winning farm as "only certain it
+    is a Gesha" because this column was a dash, while the page text held
+    "Yellow Pear, Chamomile, Almond, Vanilla Blossom".
+    """
+    product = _product(tasting_notes=[], raw_product_text="Yellow Pear Chamomile Almond")
+    row = brief.build_row(product)
+    assert row.notes == brief.NOTES_IN_TEXT_HINT
+    assert "--detail" in row.render()
+    assert "notes-in-text" in row.flags
+
+
+def test_a_row_with_no_text_at_all_still_reads_as_empty():
+    product = _product(tasting_notes=[], raw_product_text="")
+    assert brief.build_row(product).notes == ""
+
+
+def test_parsed_notes_still_win_when_present():
+    product = _product(tasting_notes=["Cherry", "Lychee"], raw_product_text="lots of prose")
+    assert brief.build_row(product).notes == "Cherry, Lychee"
