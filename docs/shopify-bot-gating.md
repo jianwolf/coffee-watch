@@ -16,6 +16,42 @@ George Howell, Olympia.
 Run totals: 127×200, 37×429, 2×401, 104 products from 6 roasters, 125.6 s. Compare
 2026-09-01: 371 products from 17/17 roasters.
 
+### It is not the egress IP, and it is not our request volume (tested 2026-10-19)
+
+A residential scrape and a datacenter one, started 90 seconds apart against the
+same 17 hosts, landed in the same place: **4 of 17** from the home IP and
+**3 of 17** from an Anthropic cloud VM. Whatever is throttling this is not
+scoring the client IP's reputation.
+
+Coverage across one evening, both IPs:
+
+| Time (UTC) | Where | Coverage |
+| :--- | :--- | :--- |
+| 2026-10-18 21:46 | residential, first scrape since 2026-09-01 | 6/17, 104 products |
+| 2026-10-18 22:06 | residential | 8/17, 140 products |
+| 2026-10-19 01:17 | cloud | 9/17, 173 products |
+| 2026-10-19 02:35 | residential | 4/17, 59 products |
+| 2026-10-19 02:35 | cloud | 3/17 |
+
+Request volume does not explain the drop, and the per-host numbers say so
+plainly. Between the 22:25 run and the 02:35 run there were **four hours with
+no requests at all** from the residential IP, and the run after that rest was
+the worst of the day. Per host, across the whole evening: SEY saw 23 requests,
+Black & White 32, Passenger 27 — and Passenger's were all inside one 90-second
+window at 21:47, nearly five hours before it started refusing. Two dozen
+requests spread over an evening is nothing to a commercial storefront.
+
+What the measurement actually shows is that **both IPs degraded together,
+within the same minute**, having done entirely different amounts of work
+beforehand. That points at a host-side state that varies over time — a tighter
+throttle later in the US evening, or a platform change rolling out — and not at
+anything a client controls. Politeness is still right on its own terms, but it
+is not a lever on this.
+
+The practical consequence is unchanged and worth keeping: a single run says
+nothing about a store, so do not conclude a roaster is gone, and do not
+re-scrape to "check" a bad result. Just read the next scheduled run.
+
 Coverage is a per-run lottery, not a stable per-store flag. A second full run two hours
 later got 140 products from 8/17 — a *different* survivor set (Onyx, Olympia, Hydrangea
 and Ilse came back; Black & White, Passenger and Proud Mary dropped out). A third,

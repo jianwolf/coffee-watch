@@ -140,10 +140,11 @@ scheduled run must not do.
   but sold-out, restock and price-move deltas need two catalogs in one
   workspace, and `first_seen_at` is always "this run". The brief states this
   rather than guessing, and the skill is required to pass that on.
-- **More bot-gating, probably.** Storefronts that already rate-limit the project
-  User-Agent from a residential IP are no friendlier to a datacenter one. See
-  [shopify-bot-gating.md](shopify-bot-gating.md). Expect fewer page-verified
-  sizes in a cloud run than locally.
+- **The same bot-gating as anywhere else.** Measured 2026-10-19: a cloud run and
+  a residential one started 90 seconds apart returned 3/17 and 4/17 roasters,
+  and both degraded together despite very different request histories. Neither
+  the egress IP nor your own request volume is the variable. See
+  [shopify-bot-gating.md](shopify-bot-gating.md).
 - **No `gh pr create`.** The GitHub proxy rejects GraphQL, so `gh pr`/`gh issue`
   fail; REST through `gh api repos/{owner}/{repo}/pulls` works, as does the
   session's own Create PR button. Not needed for scouting, which writes nothing.
