@@ -54,9 +54,10 @@ def _report_coverage(
     if products == 0:
         log.error(
             "Collected 0 products from %d configured roasters. The catalog is "
-            "empty, not quiet: check logs for 'host_not_allowed' (sandbox egress "
-            "policy), 429 (bot gating), or robots/DNS failures before treating "
-            "this run as evidence.",
+            "empty, not quiet. Check the log for 'Egress proxy refused' (sandbox "
+            "network policy -- the usual signature is every host failing at "
+            "robots.txt, which RFC 9309 makes disallow-all), 429 (roaster bot "
+            "gating), or DNS failures, before treating this run as evidence.",
             roaster_count,
         )
         return EMPTY_RUN_EXIT_CODE

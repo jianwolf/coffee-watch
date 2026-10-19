@@ -192,3 +192,27 @@ def test_a_roasters_own_403_is_not_mistaken_for_a_sandbox_block(caplog):
         detected = network.log_proxy_denial(_response(403, {}), log)
     assert detected is False
     assert caplog.text == ""
+
+
+def test_a_refused_connect_is_named_even_without_a_response(caplog):
+    """The form that actually fired in a cloud run.
+
+    The proxy rejects the CONNECT, so there is no response and no
+    `x-deny-reason` header -- httpx raises ProxyError instead. Logged as a
+    generic request failure, this reads as the roaster being unreachable.
+    """
+    log = logging.getLogger("test-proxy")
+    with caplog.at_level(logging.ERROR, logger="test-proxy"):
+        network.log_proxy_connect_refusal(
+            "https://roaster.example/robots.txt",
+            httpx.ProxyError("403 Forbidden"),
+            log,
+        )
+    assert "roaster.example" in caplog.text
+    assert "Egress proxy refused" in caplog.text
+    assert "network policy" in caplog.text
+
+
+def test_proxy_error_subclasses_http_error():
+    """Why the ProxyError handler has to come first."""
+    assert issubclass(httpx.ProxyError, httpx.HTTPError)

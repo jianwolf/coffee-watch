@@ -12,8 +12,11 @@ covers package registries and GitHub - not coffee storefronts. On that default
 every roaster request is refused by the egress proxy with `403` and
 `x-deny-reason: host_not_allowed`, and the run writes an empty catalog.
 
-Create (or edit) an environment at claude.ai/code, set network access to
-**Custom**, keep "include default list of common package managers" checked, and
+Create (or edit) an environment at claude.ai/code and set network access wide
+enough to reach the roasters. **Full** is what has been verified to work; see
+the measured results below before choosing **Custom**.
+
+For Custom, keep "include default list of common package managers" checked and
 paste the host list:
 
 ```bash
@@ -26,8 +29,32 @@ configured on a `myshopify.com` entry point that redirects elsewhere), and an
 apex wildcard where the host is the roaster's own domain. Re-run it after
 changing `config/roasters.json` and update the environment.
 
-`Full` access also works and needs no maintenance; `Custom` is preferred because
-it keeps the blast radius of a scraper bug to coffee shops.
+### What a blocked run looks like
+
+Measured on 2026-10-19, same repo, same routine, twenty minutes apart:
+
+| Network access | Result |
+| :--- | :--- |
+| Custom, with the generated host list | 0 of 17 roasters; every `robots.txt` request refused; exit 3 |
+| Full | 9 of 17 roasters, 173 products, 112 s; the other 8 were roaster `429`s |
+
+Two things about the blocked run are worth knowing, because both mislead:
+
+- **There was no `x-deny-reason` header.** The documented form is a 403 response
+  carrying it. What actually happened is that the proxy refused the CONNECT, so
+  there was no response at all -- httpx raises `ProxyError("403 Forbidden")`.
+  `coffee_watch/network.py` now logs that case as `Egress proxy refused`.
+- **It fails at `robots.txt`, before any catalog request.** RFC 9309 makes an
+  unreachable `robots.txt` a complete disallow, so one refused connection per
+  host silently removes that roaster from the run. A fully blocked run therefore
+  looks like 17 polite skips rather than 17 errors.
+
+Whether Custom failed because the list was incomplete or because of how the
+environment applied it is not established here; only that Full worked and Custom
+did not. Custom remains the better shape if you can get it working -- it keeps
+the blast radius of a scraper bug to coffee shops -- so re-check it with a
+`Run now` before trusting it, and read the run's own coverage line rather than
+the green status dot.
 
 ## 2. Give the scrape enough time
 
@@ -97,7 +124,13 @@ before relying on them.
 Each run shows up on the routine's page and in the session list; the reply is in
 the run's transcript. A green run status means the session started and exited,
 not that the scrape worked - which is why the reply is required to carry its own
-evidence line.
+evidence line. Both runs on 2026-10-19 reported `success`; one of them had
+collected nothing.
+
+Grant the routine `Bash`, `Read`, `Glob`, `Grep` and `Skill`, and withhold
+`Write` and `Edit`: the scraper writes its JSON through `python`, so the only
+thing those two would add is the ability to leave files in the repo, which a
+scheduled run must not do.
 
 ## What a cloud run cannot do
 

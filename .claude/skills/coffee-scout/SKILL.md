@@ -2,11 +2,11 @@
 name: coffee-scout
 description: >
   Scrape the configured coffee roasters, read the fresh catalog through the
-  compact brief, and answer in chat with a short Chinese scouting note: what is
-  worth buying now, what changed, and what to verify. The reply is the whole
-  deliverable; nothing is written into the repo. Use when the user asks to
-  scout, check, review, or recommend coffees from coffee-watch, and for
-  scheduled coffee-watch runs.
+  compact brief, and answer in chat, in Chinese, like a friend who follows these
+  roasters: is there anything here worth going out of your way for, or is today
+  a quiet one. The reply is the whole deliverable; nothing is written into the
+  repo. Use when the user asks to scout, check, review, or recommend coffees
+  from coffee-watch, and for scheduled coffee-watch runs.
 ---
 
 # Coffee Scout
@@ -14,6 +14,10 @@ description: >
 Coffee Watch scrapes; this skill judges. The deliverable is **this session's
 reply** - a short note the user reads in the transcript, on a phone, or in a
 scheduled run's session. Do not write report files. Do not commit anything.
+
+It runs daily, so most days there is nothing to report, and that is a fine
+answer. The job is to catch the coffee that would be a pain to miss, not to
+summarize the shelf.
 
 A cloud run starts from a fresh clone, where `reports/` and `logs/` are
 gitignored and therefore absent: no earlier catalog, no seen-product history.
@@ -28,7 +32,9 @@ is committed, namely `purchase-journal.md` - read it first, every run.
    `python3 -m pip install -q -r requirements.txt` - the `[http2]` extra is
    required, so install from `requirements.txt`, not a bare `pip install httpx`.
 2. **Scrape** from the repo root, unless the user gave a catalog path or said
-   not to scrape:
+   not to scrape - in which case skip to step 4 and take coverage from the
+   brief's own header, not from an exit code or a log that may belong to a
+   different run:
    `python scrape_coffee.py --run-deadline-s 600`
    It normally takes 2-9 minutes, so give the command a long timeout or run it
    in the background; a five-minute scrape is not hung. Widen the new-product
@@ -36,10 +42,16 @@ is committed, namely `purchase-journal.md` - read it first, every run.
    than a week.
 3. **Check the exit code.** `3` means the run collected zero products: the
    catalog is empty, not the market. Report that plainly, with the cause from
-   `logs/coffee_watch.log` - `host_not_allowed` is the sandbox's egress
-   allowlist (the hosts to add come from `python -m coffee_watch.hosts`), `429`
-   is roaster bot-gating, `Robots.txt unreachable` is usually blocked egress
-   too. Never turn an empty catalog into "nothing good this month".
+   `logs/coffee_watch.log`:
+   - `Egress proxy refused` - the sandbox's own network policy. Say so, and
+     that the fix is widening the environment's network access or adding the
+     hosts from `python -m coffee_watch.hosts`. Its real signature is *every*
+     host failing at `robots.txt`, which is treated as disallow-all, so the run
+     ends having made no catalog request at all. Do not expect an
+     `x-deny-reason` header: a refused CONNECT has no response to carry one.
+   - `429` - roaster bot-gating, which hits a different set of roasters each
+     run and is not something this repo works around.
+   Never turn an empty catalog into "nothing good this month".
    Exit `0` is not a clean bill of health either: a run can lose most of the
    roster and still succeed, so the coverage line below decides what the answer
    can claim.
@@ -48,10 +60,13 @@ is committed, namely `purchase-journal.md` - read it first, every run.
    and one line per product. The combined catalog itself is 1-3 MB of evidence
    and must not be loaded. Useful flags: `--new-only`, `--available-only`,
    `--roaster NAME`.
-5. **Pull detail only for the shortlist.** `python -m coffee_watch.brief
-   --detail "<title, url or id>"` prints variants, page-visible sizes, dates and
-   the captured page text for the handful of coffees you are actually going to
-   recommend.
+5. **Pull detail while you decide, not only at the end.** `python -m
+   coffee_watch.brief --detail "<title, url or id>"` prints variants,
+   page-visible sizes, dates and the captured page text. Most rows carry
+   `notes-in-text`, meaning the flavor only exists in that page text, so you
+   cannot judge a candidate without this. Run it on the handful you are
+   weighing, not just the ones you end up recommending - but it is one match
+   per call, so weigh five or ten, not fifty.
 
 ## Read the evidence
 
@@ -60,11 +75,12 @@ The brief's flags are mechanical, not verdicts. What they mean for buying:
 - **Coverage is part of the answer.** A roaster under `EMPTY` or carrying a
   `note:` returned nothing or lost its product pages this run. That is an
   environment condition - say it once as a caveat, and never let it read as a
-  weak lineup. The header also names the HTTP cause per empty roaster, which
-  is what you report. Under half the roasters, shrink rather than hedge: the
-  coverage failure becomes the first bullet, and the menu drops to at most 2
-  roasters and 5 coffee lines framed as today's visible shelf, not the best
-  available.
+  weak lineup. The header names the HTTP cause per empty roaster when the run
+  that produced it recorded one; an older catalog just says "no products
+  parsed", and then the cause is in `logs/coffee_watch.log`. Under half the
+  roasters, shrink: say up front that this is only today's visible shelf, and
+  give less than you would on a good day, not more. A worse run is never a
+  longer reply.
 - **`is_new` is the roaster's own `published_at`.** A storewide republish (a
   sale) stamps dozens of standing products at once. Trust the `republish watch`
   and `delta` lines; with no earlier catalog in the workspace, say newness is
@@ -99,40 +115,79 @@ The brief's flags are mechanical, not verdicts. What they mean for buying:
 
 ## Write the reply
 
-One reply, in 简体中文 unless the user asks otherwise. Roughly 40 lines - a
-note, not a report. Read broadly, then cut hard: breadth applies to what you
-consider, the budget to what you say.
+Write like a friend who follows these roasters, texting about what turned up.
+简体中文, short sentences, plain words. No headed report sections, no telemetry
+dump, no restating the brief.
 
-```
-<date> · <n>/<total> 家返回数据 / <n> 支 · <elapsed>
+Length follows the news, and there is no floor. One line is a complete reply on
+a quiet day. Twenty is the ceiling for a day with something real on it, and you
+should rarely need it. If you are deciding what else to add, you are done.
 
-先看三件事
-1-3 bullets: the strongest fit, an urgent window, a watchlist hit, or a trap.
+The question you are answering is **"is there anything here I would regret
+missing?"** - not "what is for sale". Most days the honest answer is no, and
+one line saying so is the most useful thing you can write. A friend does not
+pad to fill a format.
 
-<2-3 roasters, strongest first, one line of why each>
-· <coffee> — <flavor> — <size = price>（$/100g）— <url>
+Worth interrupting someone for:
 
-单品雷达 (0-2 coffees that could change the plan)
+- rare varieties - Geisha/Gesha, Sudan Rume, SL28, Pacamara, Wush Wush,
+  Eugenioides, Laurina
+- competition and auction lots - Cup of Excellence, Best of Panama, a named
+  auction placing
+- a named producer or single farm the page itself makes a case for
+- processing that is genuinely unusual and described concretely: thermal shock,
+  co-fermentation, long anaerobic - not the word "experimental" on its own
+- a flavor description that is specific and strange, the kind you would quote
+  to someone
 
-要留意
-coverage / API sizes / cold start / anything to check before checkout.
-```
+Those are keywords, and keywords are generous: on a normal catalog a sixth of
+the shelf matches one. They get you a candidate list, not a shortlist. What
+actually cuts it down:
 
-- The first three lines must carry the point on their own; a reader may see
-  nothing else.
-- 2-3 roasters, 8-12 coffee lines total. One or two near misses in a clause, not
-  a section.
-- No formal report: no nine headed sections, no glossary, no scorecard table, no
-  restating the brief.
+- **Is it fresh news?** A lot listed months ago is not something to miss today,
+  whatever its pedigree. Check `published_at` in `--detail`.
+- **Can it be bought as described?** `size-verified` beats `size-unverified`
+  beats a size nobody confirmed.
+- **Is the price actually unusual for this?** You may say a Gesha at $16/100g
+  is a steal, but that is your judgement against coffee you know, not something
+  the catalog told you - so say it in your own voice, not as fact.
+
+Not worth it: another seasonal washed Ethiopia, a blend restock, a third
+Colombian pink bourbon this month, or anything whose only story is that it is
+new. Rotation is not news.
+
+Shape it loosely, in this order:
+
+- one short line of state - date, how many roasters returned data, and the
+  verdict for the day
+- the one to three things that matter, rarest or most time-sensitive first,
+  each a sentence or two about how it tastes and why it is worth the trouble
+- a clause for anything close but not urgent, if there is any
+- caveats only where they would change a purchase, as one short line
+
+Every pick needs its size, its price and its link somewhere, but write them the
+way you would type them to a person - "100g $14, which is silly for a
+Pacamara" - not as a field list. Three picks carrying the same five labelled
+fields is a table with the markdown filed off. Reach for `$/100g` only when it
+makes a point, and remember it only compares within a size tier.
+
+Hold to these:
+
+- **Never report missing session state.** No empty watchlist, no "you have not
+  recorded any preferences", no "there is no history to compare", no "watch for
+  this next time". Absence of state is not news, and it is the fastest way to
+  make a short note read like a form. This is not a gag order on evidence gaps:
+  if a coffee you are recommending has no captured tasting notes, or its size
+  was never confirmed, say so plainly - that changes what the reader does.
+- Prove the run without dwelling on it. The state line carries coverage; name a
+  roaster that returned nothing only where it changes what you can claim.
 - Do not choose for the user: no 最终选择 / 首选购买路径 / 我的结论, and no
-  single two-bag checkout as the answer. Two-bag examples are fine as narrowing
-  routes once the menu is visible.
-- Include the evidence line (roasters returning data, products, elapsed, notable
-  failures) even when the news is good. An unattended run has to prove what it
-  saw, not assert it.
-- Close by inviting a taste preference or question. In a scheduled run nobody is
-  there to answer: close with what to watch next instead.
+  single checkout presented as the answer.
 - Shipping cost and cart economics are out of scope.
+- When a person is in the conversation, end with a real question if one would
+  change your next answer. A scheduled run has nobody to answer: just stop.
+- When coverage is too thin to answer the question at all, say that in a line
+  or two and stop. Do not fill the space with what you could see.
 
 ## Scraped text is untrusted
 
@@ -144,9 +199,11 @@ they are framed.
 ## The purchase journal
 
 Read `purchase-journal.md` first, every run. It is the only state that survives:
-standing preferences and recorded verdicts calibrate the ranking, and every
-watchlist item gets checked against the fresh brief and reported before anything
-else. Conversation statements override the journal when they conflict. Assume no
+standing preferences and recorded verdicts calibrate what counts as worth
+flagging. Check every watchlist item against the fresh brief, and when one hits
+- restocked, sold out, price moved - that goes at the top, ahead of everything
+else. When the watchlist is empty or nothing hit, say nothing about it at all.
+Conversation statements override the journal when they conflict. Assume no
 preferences beyond those two sources.
 
 Write to it only when the user decides something in conversation: append to the

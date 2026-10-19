@@ -344,3 +344,41 @@ def test_parse_sitemap_xml_reads_plain_urlset():
     lastmods, children = _parse_sitemap_xml(xml)
     assert lastmods == {"https://example.com/product-page/p": "2026-01-01"}
     assert children == []
+
+
+async def test_a_blocked_egress_reports_the_robots_gate_not_an_empty_shop(tmp_path):
+    """A refused CONNECT must not reach the reader as "no products parsed".
+
+    The proxy rejects the connection, httpx raises ProxyError, robots.txt is
+    therefore unreachable, and RFC 9309 makes that a complete disallow -- so the
+    roaster is skipped before any catalog request. Without a diagnostic the
+    reader is told the shop was empty.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ProxyError("403 Forbidden")
+
+    roaster = RoasterSource(
+        "Blocked Roaster",
+        "https://example.com",
+        products_path="/shop",
+        products_type="html",
+    )
+    diagnostics: list[str] = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        products = await fetch_products_for_roaster(
+            client,
+            roaster,
+            _settings(),
+            {},
+            tmp_path,
+            "20261019",
+            None,
+            make_logger(),
+            diagnostics=diagnostics,
+        )
+
+    assert products == []
+    assert diagnostics == [
+        "robots.txt unreachable or disallows crawling, so no catalog request was made"
+    ]
