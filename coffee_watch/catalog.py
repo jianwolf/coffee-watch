@@ -4,6 +4,7 @@ import re
 from datetime import date
 from typing import Any
 
+from .atom_feed import ATOM_PRICE_SOURCE
 from .constants import USER_AGENT
 from .models import ProductCandidate, RoasterRunStatus, RoasterSource, VariantInfo
 
@@ -265,6 +266,12 @@ def _api_grams_size(variant: VariantInfo) -> str:
 def _display_price(product: ProductCandidate) -> tuple[str, str, str, str]:
     if product.storefront_status == STOREFRONT_UNAVAILABLE_STATUS:
         return "", "", "", STOREFRONT_UNAVAILABLE_STATUS
+    if product.catalog_source == ATOM_PRICE_SOURCE and not product.variants:
+        # The feed quotes a price range, not a price per size. Report the
+        # figure without a size label: inventing one would make an
+        # unverified number look like a purchasable option.
+        list_price = _clean(product.list_price)
+        return list_price, "", _price_label(list_price, ""), ATOM_PRICE_SOURCE
     variant, source = _preferred_price_variant(product)
     if variant is not None:
         price = _clean(variant.price)
@@ -294,6 +301,12 @@ def _availability(product: ProductCandidate, roaster: RoasterSource) -> str:
         return "unavailable"
     if _badge_indicates_unavailable(product.list_badge):
         return "unavailable"
+    if product.catalog_source == ATOM_PRICE_SOURCE and not product.variants:
+        # The Atom feed carries no stock flag at all. The "no variants means
+        # available" rule below is for products discovered on a storefront
+        # page, where a missing sold-out badge is itself evidence; a feed entry
+        # offers no such evidence either way.
+        return "unknown"
     if not product.variants:
         if roaster.platform != "shopify" and product.url:
             return "available"

@@ -6,11 +6,13 @@ import asyncio
 import logging
 import re
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 
+from .atom_feed import ATOM_PRICE_SOURCE
 from .catalog import build_combined_catalog, build_new_products_catalog
 from .config import Settings
 from .constants import USER_AGENT
@@ -330,6 +332,94 @@ async def _retry_rate_limited(
     return results, remaining_failed, stats
 
 
+
+async def _fill_from_atom(
+    ctx: RunContext,
+    roasters: list[RoasterSource],
+    results: list[RoasterScrapeResult],
+    failed_roasters: list[str],
+    started_at: float,
+) -> tuple[list[RoasterScrapeResult], list[str], int]:
+    """Last resort for roasters the catalog API never let through.
+
+    Runs after the retry passes, not instead of them: the feed carries no
+    per-variant size, price or stock, so a gated roaster should spend its full
+    attempts on real catalog data before settling for a thinner source. The
+    products that come back are marked, and the brief says what is missing.
+    """
+    settings = ctx.settings
+    log = ctx.logger
+    if not settings.atom_fallback:
+        return results, failed_roasters, 0
+    targets = _rate_limited_roasters(results, roasters)
+    if not targets:
+        return results, failed_roasters, 0
+
+    budget = _remaining_budget(settings, started_at)
+    if budget is not None and budget < RETRY_MIN_WORK_S:
+        log.info(
+            "Atom fallback skipped for %d roaster(s): %.0fs of budget left.",
+            len(targets),
+            budget,
+        )
+        return results, failed_roasters, 0
+
+    log.info(
+        "Atom fallback: trying the collection feed for %d roaster(s) the catalog "
+        "API never allowed (%s).",
+        len(targets),
+        ", ".join(roaster.name for roaster in targets),
+    )
+    atom_results, _atom_failed = await _run_roasters(
+        replace(ctx, atom_fallback=True), targets, deadline=budget
+    )
+    better = {
+        result.status.roaster: result
+        for result in atom_results
+        if result.status.products_found
+    }
+    if not better:
+        log.info("Atom fallback recovered nothing.")
+        return results, failed_roasters, 0
+
+    # This pass re-asks the catalog API before falling back, so some roasters
+    # recover with full variant data and only the rest are feed-sourced. Credit
+    # them separately: calling an API recovery "from the feed" would overstate
+    # how much of the catalog is missing its sizes.
+    via_feed = {
+        name
+        for name, result in better.items()
+        if any(
+            isinstance(product, dict)
+            and product.get("price_source") == ATOM_PRICE_SOURCE
+            for product in (result.catalog or {}).get("products", [])
+        )
+    }
+    via_api = sorted(set(better) - via_feed)
+    if via_feed:
+        log.info(
+            "Atom fallback: %d roaster(s) recovered from the feed (%s), with no "
+            "per-variant size, price or stock.",
+            len(via_feed),
+            ", ".join(sorted(via_feed)),
+        )
+    if via_api:
+        log.info(
+            "Atom fallback: %d roaster(s) recovered with full catalog data after "
+            "all (%s); the catalog API allowed them on this attempt.",
+            len(via_api),
+            ", ".join(via_api),
+        )
+    recovered = set(better)
+    merged = list(results)
+    for index, result in enumerate(results):
+        replacement = better.pop(result.status.roaster, None)
+        if replacement is not None:
+            merged[index] = replacement
+    remaining_failed = [name for name in failed_roasters if name not in recovered]
+    return merged, remaining_failed, len(via_feed)
+
+
 def _write_run_catalogs(
     settings: Settings,
     run_id: str,
@@ -420,7 +510,17 @@ async def _run_full(
         ctx.logger.exception(
             "Second pass failed; keeping the first pass's results."
         )
-        retry_stats = {"retried": 0, "recovered": 0}
+        retry_stats = {"retried": 0, "recovered": 0, "passes": 0}
+    try:
+        results, failed_roasters, from_atom = await _fill_from_atom(
+            ctx, roasters, results, failed_roasters, started_at
+        )
+        retry_stats = {**retry_stats, "from_atom": from_atom}
+    except Exception:
+        ctx.logger.exception(
+            "Atom fallback failed; keeping what the catalog passes collected."
+        )
+        retry_stats = {**retry_stats, "from_atom": 0}
     catalogs = [result.catalog for result in results if result.catalog]
     if not catalogs:
         ctx.logger.error("No roaster catalogs were written for %s.", ctx.run_id)

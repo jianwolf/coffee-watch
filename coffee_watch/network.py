@@ -6,6 +6,7 @@ import logging
 import random
 import xml.etree.ElementTree as ET
 from collections import deque
+from dataclasses import replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from urllib.robotparser import RobotFileParser
 
 import httpx
 
+from .atom_feed import ATOM_PRICE_SOURCE, atom_url_for, parse_atom_feed
 from .config import Settings
 from .constants import USER_AGENT
 from .http_limits import Host429Gate, PerHostLimiter
@@ -408,6 +410,7 @@ async def fetch_products_for_roaster(
     log: logging.Logger,
     denylist: set[str] | None = None,
     diagnostics: list[str] | None = None,
+    allow_atom: bool = False,
 ) -> list[ProductCandidate]:
     """Fetch a roaster's catalog.
 
@@ -415,6 +418,11 @@ async def fetch_products_for_roaster(
     empty result otherwise reaches the reader as 'no products parsed', which
     is both wrong and useless when the truth is a 429 at the catalog API:
     nothing was ever fetched to parse.
+
+    ``allow_atom`` permits one fallback request to the collection's Atom feed
+    when the catalog API refused and produced nothing. Callers leave it off for
+    the catalog passes so a gated roaster spends its attempts on real variant
+    data first; see atom_feed for what the feed gives up.
     """
     max_products = roaster.max_products or settings.max_products_per_source
     pagination = roaster.pagination or PaginationConfig(max_pages=1)
@@ -603,7 +611,80 @@ async def fetch_products_for_roaster(
         if len(products) >= max_products:
             break
 
-    return products
+    if products or not allow_atom:
+        return products
+    return await _fetch_atom_fallback(
+        http_client,
+        roaster,
+        settings,
+        robots_cache,
+        limiter,
+        log,
+        denylist=denylist,
+        diagnostics=diagnostics,
+    )
+
+
+async def _fetch_atom_fallback(
+    http_client: httpx.AsyncClient,
+    roaster: RoasterSource,
+    settings: Settings,
+    robots_cache: dict[str, RobotFileParser],
+    limiter: PerHostLimiter | None,
+    log: logging.Logger,
+    denylist: set[str] | None = None,
+    diagnostics: list[str] | None = None,
+) -> list[ProductCandidate]:
+    """One request to the collection's Atom feed, after the catalog refused.
+
+    Goes through the same robots check, denylist, limiter and jitter as any
+    other fetch. The feed is capped and carries no per-variant data, so this is
+    a degraded source and the products it returns say so.
+    """
+    feed_url = atom_url_for(roaster.base_url, roaster.products_path)
+    if not feed_url:
+        return []
+    allowed = await robots_allows(
+        http_client,
+        feed_url,
+        settings,
+        robots_cache,
+        log,
+        limiter=limiter,
+        jitter_multiplier=roaster.jitter_multiplier,
+        denylist=denylist,
+    )
+    if not allowed:
+        log.info("Robots.txt disallows the Atom feed for %s; skipping.", roaster.name)
+        return []
+    response = await fetch_text_with_jitter(
+        http_client,
+        feed_url,
+        settings,
+        log,
+        limiter=limiter,
+        jitter_multiplier=roaster.jitter_multiplier,
+        denylist=denylist,
+    )
+    if response is None or response.status_code >= 400:
+        status = "no response" if response is None else response.status_code
+        log.info("Atom feed for %s unavailable (%s).", roaster.name, status)
+        if diagnostics is not None:
+            diagnostics.append(f"atom feed also unavailable ({status})")
+        return []
+    products = parse_atom_feed(response.text, roaster.name, log)
+    if not products:
+        if diagnostics is not None:
+            diagnostics.append("atom feed returned no entries")
+        return []
+    if diagnostics is not None:
+        diagnostics.append(
+            f"recovered {len(products)} product(s) from the Atom feed; no "
+            "per-variant size, price or stock"
+        )
+    return [
+        replace(product, catalog_source=ATOM_PRICE_SOURCE) for product in products
+    ]
 
 
 async def fetch_product_page_text(

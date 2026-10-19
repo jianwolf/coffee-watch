@@ -486,6 +486,7 @@ def test_the_second_pass_count_reaches_the_written_catalog(monkeypatch, tmp_path
         "retried": 1,
         "recovered": 1,
         "passes": 1,
+        "from_atom": 0,
     }
     assert catalog["summary"]["failed_roasters"] == []
     # And the brief reads it back out of the real catalog, not a hand-built dict.

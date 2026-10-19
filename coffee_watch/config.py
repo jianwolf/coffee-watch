@@ -23,6 +23,7 @@ class Settings:
     retry_rate_limited_roasters: bool
     retry_cooldown_s: float
     retry_max_passes: int
+    atom_fallback: bool
     http_max_response_bytes: int
     http_max_retries: int
     jitter_min_s: float
@@ -108,6 +109,7 @@ class Settings:
             retry_rate_limited_roasters=True,
             retry_cooldown_s=120.0,
             retry_max_passes=2,
+            atom_fallback=True,
             http_max_response_bytes=10_000_000,
             http_max_retries=2,
             jitter_min_s=0.7,
@@ -244,6 +246,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser,
         "resume",
         "retry missing/failed roaster catalog outputs for the current UTC day",
+        None,
+    )
+    add_bool_flag(
+        parser,
+        "atom-fallback",
+        "fall back to a collection Atom feed when the catalog API never allows a "
+        "roaster (thinner data: no per-variant size, price or stock)",
         None,
     )
     add_bool_flag(
@@ -386,6 +395,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         retry_max_passes=_as_int(
             "retry_max_passes", pick_value("retry_max_passes")
         ),
+        atom_fallback=_as_bool("atom_fallback", pick_value("atom_fallback")),
         http_max_response_bytes=_as_int(
             "http_max_response_bytes", pick_value("http_max_response_bytes")
         ),

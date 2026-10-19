@@ -47,6 +47,9 @@ class ProductCandidate:
     storefront_status: str = ""
     shopify_updated_at: str = ""
     shopify_published_at: str = ""
+    # Set when the product came from a fallback source whose data is
+    # thinner than the catalog API's, so the catalog can mark it.
+    catalog_source: str = ""
 
 
 @dataclass(frozen=True)

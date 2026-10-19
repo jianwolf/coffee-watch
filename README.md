@@ -51,6 +51,7 @@ Setting up the cloud environment (network allowlist, timeouts, the monthly routi
 - `coffee_watch/roaster_pipeline.py` - per-roaster scrape, classification, and catalog writing
 - `coffee_watch/catalog.py` - normalized catalog schema helpers
 - `coffee_watch/catalog_parsers.py` - named catalog HTML parsers (e.g. Wix shop pages)
+- `coffee_watch/atom_feed.py` - Shopify collection Atom feed fallback and its limits
 - `coffee_watch/parsing.py` - roaster config loading and product payload parsing
 - `coffee_watch/classify.py` - new-product date resolution
 - `coffee_watch/network.py` - HTTP fetching, retries, robots, sitemaps
@@ -186,6 +187,15 @@ python scrape_coffee.py --no-retry-rate-limited-roasters
 
 Only a retryable catalog-API status (429, 5xx) qualifies. A roaster skipped at the robots gate is never retried — honouring `robots.txt` is the point, not an error — and neither is a sandbox egress refusal, which will not change mid-run.
 
+After the retries, a roaster the catalog API never allowed falls back to the collection's Atom feed, which Shopify publishes for the same collection and which these stores' `robots.txt` allows (`User-agent: * / Allow: /`). One request returns the product list with titles, URLs, published dates and the roaster's own tasting-note text. It is a degraded source and the rows say so:
+
+- **No per-variant size, price or stock.** The feed quotes a price *range*, so there is no purchasable size, no `$/100g`, and availability is `unknown` rather than in stock. Rows carry the `ATOM-ONLY-no-size-or-stock` flag and the brief's header repeats the caveat.
+- **The newest 25 products only.** The feed is capped and ignores `?page`, so a large store is truncated. Entries are newest-first, so the cap keeps the window a "what is new" question needs and drops older standing stock.
+
+In practice the subsequent product-page fetch upgrades most feed-discovered coffees to real page-verified sizes; a measured run left only 4 rows feed-only, all of them non-coffee (gift cards, instant, subscriptions). Disable with `--no-atom-fallback`.
+
+Measured end to end: first pass 7/17, retry pass 1 recovered 3, retry pass 2 recovered 2, the feed covered the last 3 — **17/17, 383 products**, in 684s of a 900s budget.
+
 Use an alternate config:
 
 ```bash
@@ -214,6 +224,7 @@ Example `config/settings.json`:
   "retry_rate_limited_roasters": true,
   "retry_cooldown_s": 120.0,
   "retry_max_passes": 2,
+  "atom_fallback": true,
   "http_max_response_bytes": 10000000,
   "http_max_retries": 2,
   "jitter_min_s": 0.7,
