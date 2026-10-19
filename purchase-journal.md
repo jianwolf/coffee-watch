@@ -23,7 +23,12 @@ tasting. The skill may update this file; it should never delete user-written con
 ## Standing preferences / 固定偏好
 
 - Buying cadence: ~2 bags from one roaster, about once per month.
-- (add taste/budget/roast preferences here, or tell the skill to record them)
+- What I actually want to hear about: coffee that would be a pain to miss -
+  very rare, or a genuinely great flavor. Not rotation, not restocks, not
+  another washed Ethiopia. If nothing qualifies on a given day, say so in one
+  line; I would rather read "nothing today" than a menu.
+- Tone: talk to me like a friend texting, not like a report.
+- (add taste, budget or roast preferences here as they come up)
 
 ## Watchlist / 关注清单
 
