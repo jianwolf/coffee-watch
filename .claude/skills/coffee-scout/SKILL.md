@@ -36,10 +36,16 @@ is committed, namely `purchase-journal.md` - read it first, every run.
    than a week.
 3. **Check the exit code.** `3` means the run collected zero products: the
    catalog is empty, not the market. Report that plainly, with the cause from
-   `logs/coffee_watch.log` - `host_not_allowed` is the sandbox's egress
-   allowlist (the hosts to add come from `python -m coffee_watch.hosts`), `429`
-   is roaster bot-gating, `Robots.txt unreachable` is usually blocked egress
-   too. Never turn an empty catalog into "nothing good this month".
+   `logs/coffee_watch.log`:
+   - `Egress proxy refused` - the sandbox's own network policy. Say so, and
+     that the fix is widening the environment's network access or adding the
+     hosts from `python -m coffee_watch.hosts`. Its real signature is *every*
+     host failing at `robots.txt`, which is treated as disallow-all, so the run
+     ends having made no catalog request at all. Do not expect an
+     `x-deny-reason` header: a refused CONNECT has no response to carry one.
+   - `429` - roaster bot-gating, which hits a different set of roasters each
+     run and is not something this repo works around.
+   Never turn an empty catalog into "nothing good this month".
    Exit `0` is not a clean bill of health either: a run can lose most of the
    roster and still succeed, so the coverage line below decides what the answer
    can claim.

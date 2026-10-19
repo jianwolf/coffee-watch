@@ -45,10 +45,22 @@ _ALLOWED_SCHEMES = frozenset({"http", "https"})
 # cannot stall the run with an arbitrarily large value.
 RETRY_AFTER_MAX_S = 60.0
 # Agent sandboxes (Claude Code cloud environments among them) route egress
-# through a proxy that refuses hosts outside the environment allowlist with a
-# 403 carrying this header. That is the sandbox's policy, not the roaster's, and
-# conflating the two turns a one-line allowlist fix into a phantom block.
+# through a proxy that refuses hosts outside the environment allowlist. That is
+# the sandbox's policy, not the roaster's, and conflating the two turns a
+# one-line allowlist fix into a phantom block.
+#
+# It shows up two ways. Documented: a 403 response carrying this header.
+# Observed in a real cloud run on 2026-10-19: no response at all, because the
+# proxy rejects the CONNECT itself, which httpx raises as ProxyError("403
+# Forbidden"). The second form is the one that actually fired, and it is the
+# more damaging of the two -- every host fails at robots.txt, which RFC 9309
+# makes disallow-all, so the run ends without a single catalog request.
 PROXY_DENY_HEADER = "x-deny-reason"
+EGRESS_BLOCK_HINT = (
+    "This is the sandbox network policy, not the site: widen the environment's "
+    "network access, or add the hosts from `python -m coffee_watch.hosts` to its "
+    "allowed domains."
+)
 
 
 def log_proxy_denial(response: httpx.Response, log: logging.Logger) -> bool:
@@ -57,13 +69,25 @@ def log_proxy_denial(response: httpx.Response, log: logging.Logger) -> bool:
     if not reason:
         return False
     log.error(
-        "Egress proxy refused %s (%s=%s). This is the sandbox network policy, "
-        "not the site: add the host to the environment's allowed domains.",
+        "Egress proxy refused %s (%s=%s). %s",
         urlsplit(str(response.request.url)).netloc or str(response.request.url),
         PROXY_DENY_HEADER,
         reason,
+        EGRESS_BLOCK_HINT,
     )
     return True
+
+
+def log_proxy_connect_refusal(
+    url: str, exc: httpx.ProxyError, log: logging.Logger
+) -> None:
+    """Log a proxy CONNECT refusal, which arrives as an exception, not a 403."""
+    log.error(
+        "Egress proxy refused a connection to %s (%s). %s",
+        urlsplit(url).netloc or url,
+        exc,
+        EGRESS_BLOCK_HINT,
+    )
 
 
 def _refuse_reason(url: str, denylist: set[str] | None) -> str | None:
@@ -254,6 +278,11 @@ async def fetch_text_with_jitter(
             )
             identity_fallback = True
             return None
+        except httpx.ProxyError as exc:
+            # Ahead of HTTPError, which ProxyError subclasses: a sandbox
+            # refusal would otherwise read as the site being unreachable.
+            log_proxy_connect_refusal(url, exc, log)
+            return None
         except httpx.HTTPError as exc:
             log.warning("HTTP request failed for %s: %s", url, exc)
             return None
@@ -423,6 +452,11 @@ async def fetch_products_for_roaster(
                 products_url,
                 roaster.name,
             )
+            if diagnostics is not None:
+                diagnostics.append(
+                    "robots.txt unreachable or disallows crawling, so no catalog "
+                    "request was made"
+                )
             if stop_on_empty:
                 break
             continue
