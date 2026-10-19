@@ -450,6 +450,12 @@ def coverage(catalog: dict[str, Any]) -> list[str]:
         f"coverage: {with_products}/{total} roasters returned products; "
         f"{summary.get('products', 0)} products, {summary.get('new_products', 0)} flagged is_new",
     ]
+    second = _mapping(summary.get("second_pass"))
+    if second.get("retried"):
+        lines.append(
+            f"second pass: {second.get('recovered', 0)} of {second['retried']} "
+            f"rate-limited roaster(s) recovered after a cooldown"
+        )
     if empty:
         lines.append(f"EMPTY ({len(empty)}): " + "; ".join(empty))
     failed = summary.get("failed_roasters") or []

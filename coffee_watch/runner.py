@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -38,6 +39,14 @@ from .seen_products import SeenProducts
 # exit code is the only place it can be distinguished from a quiet week. This
 # matters most unattended, where nobody reads the log unless something says to.
 EMPTY_RUN_EXIT_CODE = 3
+
+# Shopify's catalog-API 429s carry no Retry-After, and which stores are gated
+# changes minute to minute (docs/shopify-bot-gating.md), so a store that
+# refused the first pass may answer a few minutes later. A full run typically
+# finishes in a third of its deadline, and that idle remainder is what pays for
+# a second attempt.
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_CATALOG_STATUS_RE = re.compile(r"catalog API returned HTTP (\d{3})")
 
 
 def _elapsed_since(started_at: float) -> float:
@@ -76,6 +85,7 @@ def _report_coverage(
 async def _run_roasters(
     ctx: RunContext,
     target_roasters: list[RoasterSource],
+    deadline: float | None = None,
 ) -> tuple[list[RoasterScrapeResult], list[str]]:
     if not target_roasters:
         return [], []
@@ -83,7 +93,8 @@ async def _run_roasters(
         asyncio.create_task(process_roaster(ctx, roaster)): roaster
         for roaster in target_roasters
     }
-    deadline = ctx.settings.run_deadline_s
+    if deadline is None:
+        deadline = ctx.settings.run_deadline_s
     # asyncio.wait rather than gather: when the budget runs out, roasters that
     # already finished are kept and only the stragglers are cancelled. An
     # unattended run would rather have a partial catalog than nothing.
@@ -127,6 +138,117 @@ async def _run_roasters(
     return scrape_results, failed_names
 
 
+
+def _rate_limited_roasters(
+    results: list[RoasterScrapeResult],
+    roasters: list[RoasterSource],
+) -> list[RoasterSource]:
+    """Roasters worth one more attempt, in configuration order.
+
+    Only a retryable status on the catalog API qualifies. A roaster skipped at
+    the robots gate is deliberately excluded: honouring robots.txt is the point,
+    not an error to retry. So is a sandbox egress refusal, which will not change
+    mid-run.
+    """
+    by_name = {roaster.name: roaster for roaster in roasters}
+    targets: list[RoasterSource] = []
+    for result in results:
+        if result.status.products_found:
+            continue
+        match = _CATALOG_STATUS_RE.search(result.status.note or "")
+        if not match or int(match.group(1)) not in RETRY_STATUSES:
+            continue
+        roaster = by_name.get(result.status.roaster)
+        if roaster is not None:
+            targets.append(roaster)
+    return targets
+
+
+def _remaining_budget(settings: Settings, started_at: float) -> float | None:
+    """Seconds left of the run deadline, or None when none was declared."""
+    if settings.run_deadline_s <= 0 or not started_at:
+        return None
+    return settings.run_deadline_s - (time.monotonic() - started_at)
+
+
+async def _retry_rate_limited(
+    ctx: RunContext,
+    roasters: list[RoasterSource],
+    results: list[RoasterScrapeResult],
+    failed_roasters: list[str],
+    started_at: float,
+) -> tuple[list[RoasterScrapeResult], list[str], dict[str, int]]:
+    """Give rate-limited roasters one more attempt inside the deadline.
+
+    Spends only what the first pass left over, and never extends the run past
+    its declared budget. With no deadline declared there is no idle remainder to
+    spend, so the pass is skipped rather than silently making every run longer.
+    """
+    settings = ctx.settings
+    log = ctx.logger
+    stats = {"retried": 0, "recovered": 0}
+    if not settings.retry_empty_roasters:
+        return results, failed_roasters, stats
+    targets = _rate_limited_roasters(results, roasters)
+    if not targets:
+        return results, failed_roasters, stats
+
+    budget = _remaining_budget(settings, started_at)
+    if budget is None:
+        log.info(
+            "Second pass skipped for %d rate-limited roaster(s): no "
+            "--run-deadline-s budget declared.",
+            len(targets),
+        )
+        return results, failed_roasters, stats
+    cooldown = min(settings.retry_cooldown_s, max(0.0, budget - 1.0))
+    if budget - cooldown <= 0:
+        log.warning(
+            "Second pass skipped for %d rate-limited roaster(s): %.0fs of budget "
+            "left, not enough for a %.0fs cooldown plus the work.",
+            len(targets),
+            budget,
+            settings.retry_cooldown_s,
+        )
+        return results, failed_roasters, stats
+
+    log.info(
+        "Second pass: %d roaster(s) rate-limited at the catalog API (%s); waiting "
+        "%.0fs of the %.0fs left in the budget.",
+        len(targets),
+        ", ".join(roaster.name for roaster in targets),
+        cooldown,
+        budget,
+    )
+    await asyncio.sleep(cooldown)
+    retry_results, _retry_failed = await _run_roasters(
+        ctx, targets, deadline=max(0.0, budget - cooldown)
+    )
+    stats["retried"] = len(targets)
+
+    # Keep a retry only where it actually produced something: a second refusal
+    # must not overwrite the first pass's evidence.
+    better = {
+        result.status.roaster: result
+        for result in retry_results
+        if result.status.products_found
+    }
+    stats["recovered"] = len(better)
+    if not better:
+        log.info("Second pass recovered nothing.")
+        return results, failed_roasters, stats
+
+    log.info(
+        "Second pass recovered %d of %d roaster(s): %s",
+        len(better),
+        len(targets),
+        ", ".join(sorted(better)),
+    )
+    merged = [better.get(result.status.roaster, result) for result in results]
+    remaining_failed = [name for name in failed_roasters if name not in better]
+    return merged, remaining_failed, stats
+
+
 def _write_run_catalogs(
     settings: Settings,
     run_id: str,
@@ -134,6 +256,7 @@ def _write_run_catalogs(
     failed_roasters: list[str],
     log: logging.Logger,
     elapsed_s: float = 0.0,
+    retry_stats: dict[str, int] | None = None,
 ) -> tuple[int, int]:
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     combined = build_combined_catalog(
@@ -144,6 +267,7 @@ def _write_run_catalogs(
         roaster_catalogs=roaster_catalogs,
         failed_roasters=failed_roasters,
         elapsed_s=elapsed_s,
+        retry_stats=retry_stats,
     )
     combined_path = save_json(
         combined_catalog_path(settings.reports_dir, run_id),
@@ -205,6 +329,9 @@ async def _run_full(
     started_at: float = 0.0,
 ) -> int:
     results, failed_roasters = await _run_roasters(ctx, roasters)
+    results, failed_roasters, retry_stats = await _retry_rate_limited(
+        ctx, roasters, results, failed_roasters, started_at
+    )
     catalogs = [result.catalog for result in results if result.catalog]
     if not catalogs:
         ctx.logger.error("No roaster catalogs were written for %s.", ctx.run_id)
@@ -216,6 +343,7 @@ async def _run_full(
         failed_roasters,
         ctx.logger,
         _elapsed_since(started_at),
+        retry_stats,
     )
     return _report_coverage(products, len(roasters), failed_roasters, ctx.logger)
 

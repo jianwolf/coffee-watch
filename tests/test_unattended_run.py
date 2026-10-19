@@ -216,3 +216,139 @@ def test_a_refused_connect_is_named_even_without_a_response(caplog):
 def test_proxy_error_subclasses_http_error():
     """Why the ProxyError handler has to come first."""
     assert issubclass(httpx.ProxyError, httpx.HTTPError)
+
+
+def _empty_result(name: str, note: str, tmp_path: Path) -> RoasterScrapeResult:
+    status = _status(name, 0)
+    status = replace(status, note=note)
+    return RoasterScrapeResult(
+        tmp_path / f"20261018-{name.lower()}.catalog.json",
+        {"roaster": {"name": name}, "summary": {"products_found": 0}, "products": []},
+        status,
+    )
+
+
+def test_only_a_retryable_catalog_status_earns_a_second_attempt(tmp_path: Path):
+    """Robots and sandbox refusals are excluded on purpose.
+
+    Honouring robots.txt is the point, not an error to retry, and an egress
+    policy will not change mid-run.
+    """
+    roasters = [RoasterSource(n, f"https://{n.lower()}.example") for n in
+                ("Gated", "Server", "Robots", "Sandbox", "Notfound", "Fine")]
+    results = [
+        _empty_result("Gated", "catalog API returned HTTP 429", tmp_path),
+        _empty_result("Server", "catalog API returned HTTP 503", tmp_path),
+        _empty_result(
+            "Robots",
+            "robots.txt unreachable or disallows crawling, so no catalog request "
+            "was made",
+            tmp_path,
+        ),
+        _empty_result("Sandbox", "blocked by sandbox egress policy", tmp_path),
+        _empty_result("Notfound", "catalog API returned HTTP 404", tmp_path),
+        _result("Fine", 3, tmp_path),
+    ]
+    targets = runner._rate_limited_roasters(results, roasters)
+    assert [r.name for r in targets] == ["Gated", "Server"]
+
+
+def test_the_second_pass_needs_a_declared_budget(tmp_path: Path, caplog):
+    """No deadline means no idle remainder to spend, so no silent slowdown."""
+    ctx = _ctx(tmp_path, run_deadline_s=0.0)
+    ctx.logger = logging.getLogger("test-retry-nobudget")
+    roasters = [RoasterSource("Gated", "https://gated.example")]
+    results = [_empty_result("Gated", "catalog API returned HTTP 429", tmp_path)]
+
+    with caplog.at_level(logging.INFO, logger="test-retry-nobudget"):
+        merged, failed, stats = asyncio.run(
+            runner._retry_rate_limited(ctx, roasters, results, ["Gated"], 0.0)
+        )
+    assert stats == {"retried": 0, "recovered": 0}
+    assert merged is results and failed == ["Gated"]
+    assert "no --run-deadline-s budget declared" in caplog.text
+
+
+def test_the_second_pass_is_skipped_when_the_budget_is_spent(tmp_path: Path, caplog):
+    import time as _time
+
+    ctx = _ctx(tmp_path, run_deadline_s=5.0, retry_cooldown_s=120.0)
+    ctx.logger = logging.getLogger("test-retry-notime")
+    roasters = [RoasterSource("Gated", "https://gated.example")]
+    results = [_empty_result("Gated", "catalog API returned HTTP 429", tmp_path)]
+    # Pretend the first pass already used the whole deadline.
+    started_at = _time.monotonic() - 10.0
+
+    with caplog.at_level(logging.WARNING, logger="test-retry-notime"):
+        _merged, _failed, stats = asyncio.run(
+            runner._retry_rate_limited(ctx, roasters, results, ["Gated"], started_at)
+        )
+    assert stats == {"retried": 0, "recovered": 0}
+    assert "not enough for a" in caplog.text
+
+
+def test_a_recovered_roaster_replaces_its_empty_result(tmp_path: Path):
+    ctx = _ctx(tmp_path, run_deadline_s=600.0, retry_cooldown_s=0.0)
+    roasters = [
+        RoasterSource("Gated", "https://gated.example"),
+        RoasterSource("Fine", "https://fine.example"),
+    ]
+    results = [
+        _empty_result("Gated", "catalog API returned HTTP 429", tmp_path),
+        _result("Fine", 2, tmp_path),
+    ]
+
+    async def fake_process_roaster(ctx_arg, roaster):
+        return _result(roaster.name, 4, tmp_path)
+
+    original = runner.process_roaster
+    runner.process_roaster = fake_process_roaster
+    try:
+        merged, failed, stats = asyncio.run(
+            runner._retry_rate_limited(
+                ctx, roasters, results, ["Gated"], __import__("time").monotonic()
+            )
+        )
+    finally:
+        runner.process_roaster = original
+
+    assert stats == {"retried": 1, "recovered": 1}
+    assert [r.status.products_found for r in merged] == [4, 2]
+    assert failed == [], "a recovered roaster must leave the failed list"
+
+
+def test_a_second_refusal_does_not_overwrite_the_first_pass(tmp_path: Path):
+    """The retry is only ever allowed to improve on what we already had."""
+    ctx = _ctx(tmp_path, run_deadline_s=600.0, retry_cooldown_s=0.0)
+    roasters = [RoasterSource("Gated", "https://gated.example")]
+    results = [_empty_result("Gated", "catalog API returned HTTP 429", tmp_path)]
+
+    async def fake_process_roaster(ctx_arg, roaster):
+        return _empty_result(roaster.name, "catalog API returned HTTP 429", tmp_path)
+
+    original = runner.process_roaster
+    runner.process_roaster = fake_process_roaster
+    try:
+        merged, failed, stats = asyncio.run(
+            runner._retry_rate_limited(
+                ctx, roasters, results, ["Gated"], __import__("time").monotonic()
+            )
+        )
+    finally:
+        runner.process_roaster = original
+
+    assert stats == {"retried": 1, "recovered": 0}
+    assert merged == results
+    assert failed == ["Gated"]
+
+
+def test_the_second_pass_can_be_turned_off(tmp_path: Path):
+    ctx = _ctx(tmp_path, run_deadline_s=600.0, retry_empty_roasters=False)
+    roasters = [RoasterSource("Gated", "https://gated.example")]
+    results = [_empty_result("Gated", "catalog API returned HTTP 429", tmp_path)]
+    _merged, _failed, stats = asyncio.run(
+        runner._retry_rate_limited(
+            ctx, roasters, results, ["Gated"], __import__("time").monotonic()
+        )
+    )
+    assert stats == {"retried": 0, "recovered": 0}

@@ -399,6 +399,19 @@ def test_coverage_reports_the_http_cause_and_elapsed_time():
     assert "HTTP 429" in lines, "the reply has to name why a roaster was empty"
 
 
+def test_coverage_credits_the_second_pass():
+    catalog = _catalog([_product()])
+    catalog["summary"]["second_pass"] = {"retried": 5, "recovered": 2}
+    lines = "\n".join(brief.coverage(catalog))
+    assert "second pass: 2 of 5 rate-limited roaster(s) recovered" in lines
+
+
+def test_coverage_is_silent_when_no_second_pass_ran():
+    catalog = _catalog([_product()])
+    catalog["summary"]["second_pass"] = {"retried": 0, "recovered": 0}
+    assert "second pass" not in "\n".join(brief.coverage(catalog))
+
+
 def test_render_brief_is_compact_and_states_missing_history():
     products = [
         _product(

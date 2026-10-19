@@ -395,6 +395,7 @@ def build_combined_catalog(
     roaster_catalogs: list[dict[str, Any]],
     failed_roasters: list[str],
     elapsed_s: float = 0.0,
+    retry_stats: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     products = [
         product
@@ -429,6 +430,10 @@ def build_combined_catalog(
             # The reply has to show what the run cost; reading it off the
             # catalog beats grepping a log that a fresh clone may not have.
             "elapsed_s": round(elapsed_s, 1),
+            # What a cooldown retry of rate-limited roasters bought, so the
+            # reply can say coverage improved rather than implying the first
+            # pass saw this much.
+            "second_pass": dict(retry_stats or {"retried": 0, "recovered": 0}),
         },
         "roasters": roasters,
         "products": products,

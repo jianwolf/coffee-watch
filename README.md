@@ -27,7 +27,7 @@ Setting up the cloud environment (network allowlist, timeouts, the monthly routi
 - Normalized per-roaster and combined catalog JSON outputs
 - Structured status sidecars for resume/retry behavior
 - Deterministic catalog projection for agent reading, with `$/100g`, wholesale-only detection, republish clustering, and a catalog-to-catalog delta
-- Unattended-run hardening: a whole-run deadline that keeps partial results, a non-zero exit when a run collects nothing, and distinct logging for sandbox egress refusals
+- Unattended-run hardening: a whole-run deadline that keeps partial results, a cooldown retry for rate-limited roasters inside that budget, a non-zero exit when a run collects nothing, and distinct logging for sandbox egress refusals
 - Repo-local `coffee-scout` skill that answers in chat and writes nothing
 - Config validation, structured logging, and pytest coverage
 
@@ -170,6 +170,18 @@ Bound the whole run. Roasters still in flight when the budget expires are cancel
 python scrape_coffee.py --run-deadline-s 600
 ```
 
+Inside that budget, roasters whose catalog API rate-limited us get one more attempt after a cooldown. Which stores are gated changes minute to minute, and a full run typically uses a third of its deadline, so the idle remainder pays for the retry. It needs a declared deadline — with none there is no idle remainder to spend, and the pass is skipped rather than making every run longer:
+
+```bash
+python scrape_coffee.py --run-deadline-s 600 --retry-cooldown-s 120
+```
+
+```bash
+python scrape_coffee.py --no-retry-empty-roasters
+```
+
+Only a retryable catalog-API status (429, 5xx) qualifies. A roaster skipped at the robots gate is never retried — honouring `robots.txt` is the point, not an error — and neither is a sandbox egress refusal, which will not change mid-run.
+
 Use an alternate config:
 
 ```bash
@@ -195,6 +207,8 @@ Example `config/settings.json`:
   "http_timeout_s": 20.0,
   "http_total_timeout_s": 120.0,
   "run_deadline_s": 0,
+  "retry_empty_roasters": true,
+  "retry_cooldown_s": 120.0,
   "http_max_response_bytes": 10000000,
   "http_max_retries": 2,
   "jitter_min_s": 0.7,
