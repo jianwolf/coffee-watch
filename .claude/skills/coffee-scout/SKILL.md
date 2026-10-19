@@ -35,9 +35,12 @@ is committed, namely `purchase-journal.md` - read it first, every run.
    not to scrape - in which case skip to step 4 and take coverage from the
    brief's own header, not from an exit code or a log that may belong to a
    different run:
-   `python scrape_coffee.py --run-deadline-s 600`
-   It normally takes 2-9 minutes, so give the command a long timeout or run it
-   in the background; a five-minute scrape is not hung. Widen the new-product
+   `python scrape_coffee.py --run-deadline-s 1200`
+   The full chain - first pass, up to two cooldown retries for rate-limited
+   roasters, then the Atom feed for whoever never answered - measured 684s and
+   reached 17/17. Give the command a long timeout or run it in the background;
+   a ten-minute scrape is not hung, and a smaller budget silently skips the
+   later passes. Widen the new-product
    window with `--new-window-days N` when the user's last session was longer ago
    than a week.
 3. **Check the exit code.** `3` means the run collected zero products: the
