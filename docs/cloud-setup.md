@@ -141,8 +141,9 @@ scheduled run must not do.
   workspace, and `first_seen_at` is always "this run". The brief states this
   rather than guessing, and the skill is required to pass that on.
 - **The same bot-gating as anywhere else.** Measured 2026-10-19: a cloud run and
-  a residential one started 90 seconds apart returned 3/17 and 4/17 roasters. The
-  egress IP is not the variable; how recently the hosts were hit is. See
+  a residential one started 90 seconds apart returned 3/17 and 4/17 roasters,
+  and both degraded together despite very different request histories. Neither
+  the egress IP nor your own request volume is the variable. See
   [shopify-bot-gating.md](shopify-bot-gating.md).
 - **No `gh pr create`.** The GitHub proxy rejects GraphQL, so `gh pr`/`gh issue`
   fail; REST through `gh api repos/{owner}/{repo}/pulls` works, as does the
