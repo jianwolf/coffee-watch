@@ -32,7 +32,9 @@ is committed, namely `purchase-journal.md` - read it first, every run.
    `python3 -m pip install -q -r requirements.txt` - the `[http2]` extra is
    required, so install from `requirements.txt`, not a bare `pip install httpx`.
 2. **Scrape** from the repo root, unless the user gave a catalog path or said
-   not to scrape:
+   not to scrape - in which case skip to step 4 and take coverage from the
+   brief's own header, not from an exit code or a log that may belong to a
+   different run:
    `python scrape_coffee.py --run-deadline-s 600`
    It normally takes 2-9 minutes, so give the command a long timeout or run it
    in the background; a five-minute scrape is not hung. Widen the new-product
@@ -58,10 +60,13 @@ is committed, namely `purchase-journal.md` - read it first, every run.
    and one line per product. The combined catalog itself is 1-3 MB of evidence
    and must not be loaded. Useful flags: `--new-only`, `--available-only`,
    `--roaster NAME`.
-5. **Pull detail only for the shortlist.** `python -m coffee_watch.brief
-   --detail "<title, url or id>"` prints variants, page-visible sizes, dates and
-   the captured page text for the handful of coffees you are actually going to
-   recommend.
+5. **Pull detail while you decide, not only at the end.** `python -m
+   coffee_watch.brief --detail "<title, url or id>"` prints variants,
+   page-visible sizes, dates and the captured page text. Most rows carry
+   `notes-in-text`, meaning the flavor only exists in that page text, so you
+   cannot judge a candidate without this. Run it on the handful you are
+   weighing, not just the ones you end up recommending - but it is one match
+   per call, so weigh five or ten, not fifty.
 
 ## Read the evidence
 
@@ -70,11 +75,12 @@ The brief's flags are mechanical, not verdicts. What they mean for buying:
 - **Coverage is part of the answer.** A roaster under `EMPTY` or carrying a
   `note:` returned nothing or lost its product pages this run. That is an
   environment condition - say it once as a caveat, and never let it read as a
-  weak lineup. The header also names the HTTP cause per empty roaster, which
-  is what you report. Under half the roasters, shrink rather than hedge: the
-  coverage failure becomes the first bullet, and the menu drops to at most 2
-  roasters and 5 coffee lines framed as today's visible shelf, not the best
-  available.
+  weak lineup. The header names the HTTP cause per empty roaster when the run
+  that produced it recorded one; an older catalog just says "no products
+  parsed", and then the cause is in `logs/coffee_watch.log`. Under half the
+  roasters, shrink: say up front that this is only today's visible shelf, and
+  give less than you would on a good day, not more. A worse run is never a
+  longer reply.
 - **`is_new` is the roaster's own `published_at`.** A storewide republish (a
   sale) stamps dozens of standing products at once. Trust the `republish watch`
   and `delta` lines; with no earlier catalog in the workspace, say newness is
@@ -110,8 +116,12 @@ The brief's flags are mechanical, not verdicts. What they mean for buying:
 ## Write the reply
 
 Write like a friend who follows these roasters, texting about what turned up.
-简体中文, short sentences, plain words. Ten to twenty lines on a normal day. No
-headed report sections, no telemetry dump, no restating the brief.
+简体中文, short sentences, plain words. No headed report sections, no telemetry
+dump, no restating the brief.
+
+Length follows the news, and there is no floor. One line is a complete reply on
+a quiet day. Twenty is the ceiling for a day with something real on it, and you
+should rarely need it. If you are deciding what else to add, you are done.
 
 The question you are answering is **"is there anything here I would regret
 missing?"** - not "what is for sale". Most days the honest answer is no, and
@@ -124,13 +134,23 @@ Worth interrupting someone for:
   Eugenioides, Laurina
 - competition and auction lots - Cup of Excellence, Best of Panama, a named
   auction placing
-- a producer or single farm with a real reputation, and microlots measured in
-  kilos rather than bags
+- a named producer or single farm the page itself makes a case for
 - processing that is genuinely unusual and described concretely: thermal shock,
   co-fermentation, long anaerobic - not the word "experimental" on its own
 - a flavor description that is specific and strange, the kind you would quote
   to someone
-- a price that is clearly wrong in your favour for what the coffee is
+
+Those are keywords, and keywords are generous: on a normal catalog a sixth of
+the shelf matches one. They get you a candidate list, not a shortlist. What
+actually cuts it down:
+
+- **Is it fresh news?** A lot listed months ago is not something to miss today,
+  whatever its pedigree. Check `published_at` in `--detail`.
+- **Can it be bought as described?** `size-verified` beats `size-unverified`
+  beats a size nobody confirmed.
+- **Is the price actually unusual for this?** You may say a Gesha at $16/100g
+  is a steal, but that is your judgement against coffee you know, not something
+  the catalog told you - so say it in your own voice, not as fact.
 
 Not worth it: another seasonal washed Ethiopia, a blend restock, a third
 Colombian pink bourbon this month, or anything whose only story is that it is
@@ -140,20 +160,25 @@ Shape it loosely, in this order:
 
 - one short line of state - date, how many roasters returned data, and the
   verdict for the day
-- the one to three things that matter, rarest or most time-sensitive first.
-  Each gets a sentence or two: how it tastes, what makes it rare, `size =
-  price`, `$/100g`, and the link
+- the one to three things that matter, rarest or most time-sensitive first,
+  each a sentence or two about how it tastes and why it is worth the trouble
 - a clause for anything close but not urgent, if there is any
 - caveats only where they would change a purchase, as one short line
 
+Every pick needs its size, its price and its link somewhere, but write them the
+way you would type them to a person - "100g $14, which is silly for a
+Pacamara" - not as a field list. Three picks carrying the same five labelled
+fields is a table with the markdown filed off. Reach for `$/100g` only when it
+makes a point, and remember it only compares within a size tier.
+
 Hold to these:
 
-- Lead with how it tastes. Pedigree supports the pick; it does not replace the
-  flavor.
-- **Never report the absence of something.** No empty watchlist, no "you have
-  not recorded any preferences", no "there is no history to compare", no "watch
-  for this next time". Say what you found. Absence is not news, and it is the
-  fastest way to make a short note read like a form.
+- **Never report missing session state.** No empty watchlist, no "you have not
+  recorded any preferences", no "there is no history to compare", no "watch for
+  this next time". Absence of state is not news, and it is the fastest way to
+  make a short note read like a form. This is not a gag order on evidence gaps:
+  if a coffee you are recommending has no captured tasting notes, or its size
+  was never confirmed, say so plainly - that changes what the reader does.
 - Prove the run without dwelling on it. The state line carries coverage; name a
   roaster that returned nothing only where it changes what you can claim.
 - Do not choose for the user: no 最终选择 / 首选购买路径 / 我的结论, and no
