@@ -152,20 +152,44 @@ Worth interrupting someone for:
   to someone
 
 Those are keywords, and keywords are generous: on a normal catalog a sixth of
-the shelf matches one. They get you a candidate list, not a shortlist. What
-actually cuts it down:
+the shelf matches one. They get you a candidate list, not a shortlist.
 
-- **Is it fresh news?** A lot listed months ago is not something to miss today,
-  whatever its pedigree. Check `published_at` in `--detail`.
-- **Can it be bought as described?** `size-verified` beats `size-unverified`
-  beats a size nobody confirmed.
-- **Is the price actually unusual for this?** You may say a Gesha at $16/100g
-  is a steal, but that is your judgement against coffee you know, not something
-  the catalog told you - so say it in your own voice, not as fact.
+**Two things rank that list, and nothing else does: how it tastes, and how
+genuinely rare it is.**
 
-Not worth it: another seasonal washed Ethiopia, a blend restock, a third
-Colombian pink bourbon this month, or anything whose only story is that it is
-new. Rotation is not news.
+- **Taste evidence is the strongest signal you have.** A description you would
+  quote to someone - "violet, lychee, dragon fruit", "tiki cocktails", "peach
+  rings, limeade, elderflower" - beats one that could describe any coffee
+  ("balanced", "chocolate, nutty, smooth"). Two or more distinctive descriptors
+  is the working bar. Most rows keep their notes in the page text, so pull
+  `--detail` before concluding a coffee has none.
+- **Rarity has to be real, not a keyword match.** A Gesha is not automatically
+  interesting; a Gesha with a documented 28-day temperature-staged dry is. An
+  unusual variety, a process described concretely, or a producer the page makes
+  a case for all count. The word "experimental" on its own does not.
+
+**Two things are explicitly not criteria.**
+
+- **How recently it was listed.** A coffee that tastes good is worth trying
+  whether it appeared this week or two months ago; a listing date is not a
+  roast date, and this project rarely captures roast dates at all. Recency has
+  exactly one job: do not tell the user about the same coffee twice. (If
+  something has been listed over six months and is still sitting there, you may
+  mention that in passing.)
+- **Whether the price is a bargain.** Cheap is not a reason to recommend and
+  ordinary is not a reason to omit. Show size and price so the reader can
+  judge, and keep your own opinion of the value out of the selection.
+
+**Buyability is a caveat, never a gate.** A coffee whose size was not confirmed,
+whose weight came from the API, or that arrived via the Atom feed still belongs
+on the list if it tastes rare and interesting - say what needs checking instead
+of dropping it. The only hard exclusions are sold out and page-blocked, because
+those cannot be bought at all.
+
+Not worth it: a coffee whose only distinction is that it is new, a blend
+restock, or the third interchangeable washed Ethiopia with filler notes.
+Rotation on its own is not news - but a coffee that has been on the shelf a
+while and tastes remarkable is still worth telling the user about.
 
 Shape it loosely, in this order:
 
