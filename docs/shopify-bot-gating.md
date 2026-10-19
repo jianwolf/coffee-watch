@@ -16,6 +16,33 @@ George Howell, Olympia.
 Run totals: 127×200, 37×429, 2×401, 104 products from 6 roasters, 125.6 s. Compare
 2026-09-01: 371 products from 17/17 roasters.
 
+### It is not the egress IP (tested 2026-10-19)
+
+A residential scrape and a datacenter one, started 90 seconds apart against the
+same 17 hosts, landed in the same place: **4 of 17** from the home IP and
+**3 of 17** from an Anthropic cloud VM. Whatever is throttling this is not
+scoring the client IP's reputation.
+
+What does predict coverage is how recently the hosts were hit. Across one
+evening, with six full scrapes between the two IPs:
+
+| Time (UTC) | Where | Coverage |
+| :--- | :--- | :--- |
+| 2026-10-18 21:46 | residential, first scrape since 2026-09-01 | 6/17, 104 products |
+| 2026-10-18 22:08 | residential | 8/17, 140 products |
+| 2026-10-19 01:17 | cloud | 9/17, 173 products |
+| 2026-10-19 02:34 | residential | 4/17, 59 products |
+| 2026-10-19 02:35 | cloud | 3/17 |
+
+The surviving set is close to random per run: of the two simultaneous runs, only
+Hydrangea came back on both. That is the shape of a token bucket, not an
+allow/deny list, and it means a single bad run says nothing about a store.
+
+It also means our own testing is part of what we measured. Six scrapes in five
+hours is far outside this project's stated low-frequency premise, and coverage
+roughly halved over that window on both IPs. Treat a cold run after a quiet
+night as the only honest baseline, and do not re-scrape to "check" a bad result.
+
 Coverage is a per-run lottery, not a stable per-store flag. A second full run two hours
 later got 140 products from 8/17 — a *different* survivor set (Onyx, Olympia, Hydrangea
 and Ilse came back; Black & White, Passenger and Proud Mary dropped out). A third,
