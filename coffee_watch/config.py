@@ -108,7 +108,7 @@ class Settings:
             run_deadline_s=0.0,
             retry_rate_limited_roasters=True,
             retry_cooldown_s=120.0,
-            retry_max_passes=2,
+            retry_max_passes=1,
             atom_fallback=True,
             http_max_response_bytes=10_000_000,
             http_max_retries=2,
@@ -177,9 +177,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--retry-max-passes",
         type=int,
         help=(
-            "How many times a rate-limited roaster may be re-asked in one run "
-            "(default 2). Each pass costs one request per host and the loop "
-            "stops as soon as a pass recovers nothing."
+            "How many cooldown retry passes a rate-limited roaster may get in "
+            "one run (default 1). Each pass costs http_max_retries+1 catalog "
+            "requests per host, so raising this makes the run ask a refusing "
+            "host noticeably more; the loop stops as soon as a pass recovers "
+            "nothing."
         ),
     )
     parser.add_argument(

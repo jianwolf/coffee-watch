@@ -57,7 +57,12 @@ RETRY_MIN_WORK_S = 30.0
 # already spent its internal attempts, and docs/shopify-bot-gating.md sets
 # the house rule at backing off after three consecutive 429s, so the ceiling
 # stays low on purpose: three asks per host per run, total.
-RETRY_MAX_PASSES = 2
+# One retry pass by default. Each pass spends three catalog requests per host
+# (http_max_retries), so the whole chain already asks a refusing host seven
+# times: three in the first pass, three here, one in the feed pass. A second
+# retry pass costs three more for a gain that measured 0 of 3 in one run and
+# 2 of 5 in another, so it is available by flag rather than by default.
+RETRY_MAX_PASSES = 1
 _CATALOG_STATUS_RE = re.compile(r"catalog API returned HTTP (\d{3})")
 _RETRY_AFTER_RE = re.compile(r"Retry-After: (\d+)")
 
@@ -370,8 +375,15 @@ async def _fill_from_atom(
         len(targets),
         ", ".join(roaster.name for roaster in targets),
     )
+    # Single catalog attempt here: this pass is for the feed, and a host that
+    # has refused every earlier attempt should not get three more.
+    atom_ctx = replace(
+        ctx,
+        atom_fallback=True,
+        settings=replace(settings, http_max_retries=0),
+    )
     atom_results, _atom_failed = await _run_roasters(
-        replace(ctx, atom_fallback=True), targets, deadline=budget
+        atom_ctx, targets, deadline=budget
     )
     better = {
         result.status.roaster: result
