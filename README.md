@@ -170,11 +170,15 @@ Bound the whole run. Roasters still in flight when the budget expires are cancel
 python scrape_coffee.py --run-deadline-s 600
 ```
 
-Inside that budget, roasters whose catalog API rate-limited us get one more attempt after a cooldown. Which stores are gated changes minute to minute, and a full run typically uses a third of its deadline, so the idle remainder pays for the retry. It needs a declared deadline — with none there is no idle remainder to spend, and the pass is skipped rather than making every run longer. The cooldown is a floor, not a remainder: if waiting it out would not leave real working time, the attempt is skipped instead of being sent and cancelled. A host's own `Retry-After` overrides the configured cooldown:
+Inside that budget, roasters whose catalog API rate-limited us get re-asked after a cooldown, and again while re-asking keeps working. Which stores are gated changes minute to minute, and a full run typically uses a third of its deadline, so the idle remainder pays for the retry. It needs a declared deadline — with none there is no idle remainder to spend, and the pass is skipped rather than making every run longer. The cooldown is a floor, not a remainder: if waiting it out would not leave real working time, the attempt is skipped instead of being sent and cancelled. A host's own `Retry-After` overrides the configured cooldown:
 
 ```bash
 python scrape_coffee.py --run-deadline-s 600 --retry-cooldown-s 120
 ```
+
+The loop stops at the first pass that recovers nothing: that is the signal that whoever is left is gated rather than throttled, and re-asking a host that has refused every time is what this project's own back-off rule forbids. `--retry-max-passes` (default 2) is the ceiling, the cooldown grows with each pass, and the default 600s budget usually affords one retry pass -- raise the deadline to afford more.
+
+Measured: two runs recovered 4 of 10 rate-limited roasters on the first retry pass, taking coverage from 7/17 to 11/17. A variant that cut each pass to a single request per host recovered 0 of 9 and is not used -- the per-request retries carry their own 30-60s backoffs and appear to be doing the work.
 
 ```bash
 python scrape_coffee.py --no-retry-rate-limited-roasters
@@ -209,6 +213,7 @@ Example `config/settings.json`:
   "run_deadline_s": 0,
   "retry_rate_limited_roasters": true,
   "retry_cooldown_s": 120.0,
+  "retry_max_passes": 2,
   "http_max_response_bytes": 10000000,
   "http_max_retries": 2,
   "jitter_min_s": 0.7,

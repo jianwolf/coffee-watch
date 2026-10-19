@@ -22,6 +22,7 @@ class Settings:
     run_deadline_s: float
     retry_rate_limited_roasters: bool
     retry_cooldown_s: float
+    retry_max_passes: int
     http_max_response_bytes: int
     http_max_retries: int
     jitter_min_s: float
@@ -67,6 +68,8 @@ class Settings:
             issues.append("retry_cooldown_s must be a finite value >= 0")
         if not math.isfinite(self.run_deadline_s):
             issues.append("run_deadline_s must be finite")
+        if self.retry_max_passes < 0:
+            issues.append("retry_max_passes must be >= 0 (0 disables retrying)")
         if self.http_max_response_bytes < 0:
             issues.append("http_max_response_bytes must be >= 0 (0 disables the cap)")
         if self.http_max_retries < 0:
@@ -104,6 +107,7 @@ class Settings:
             run_deadline_s=0.0,
             retry_rate_limited_roasters=True,
             retry_cooldown_s=120.0,
+            retry_max_passes=2,
             http_max_response_bytes=10_000_000,
             http_max_retries=2,
             jitter_min_s=0.7,
@@ -165,6 +169,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "running are cancelled and reported as incomplete (0 disables). Use "
             "this for unattended runs, where one tarpitting host would otherwise "
             "stall the job."
+        ),
+    )
+    parser.add_argument(
+        "--retry-max-passes",
+        type=int,
+        help=(
+            "How many times a rate-limited roaster may be re-asked in one run "
+            "(default 2). Each pass costs one request per host and the loop "
+            "stops as soon as a pass recovers nothing."
         ),
     )
     parser.add_argument(
@@ -369,6 +382,9 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         ),
         retry_cooldown_s=_as_float(
             "retry_cooldown_s", pick_value("retry_cooldown_s")
+        ),
+        retry_max_passes=_as_int(
+            "retry_max_passes", pick_value("retry_max_passes")
         ),
         http_max_response_bytes=_as_int(
             "http_max_response_bytes", pick_value("http_max_response_bytes")

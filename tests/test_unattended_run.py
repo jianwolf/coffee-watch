@@ -12,15 +12,17 @@ import asyncio
 import logging
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 
 from coffee_watch import network, runner
 from coffee_watch.config import Settings
+from coffee_watch.context import RunContext
+from coffee_watch.http_limits import PerHostLimiter
 from coffee_watch.models import RoasterRunStatus, RoasterSource
 from coffee_watch.report_status import STATUS_SUCCESS
 from coffee_watch.roaster_pipeline import RoasterScrapeResult
+from coffee_watch.seen_products import SeenProducts
 
 
 def _status(roaster: str, products: int) -> RoasterRunStatus:
@@ -49,12 +51,22 @@ def _result(name: str, products: int, tmp_path: Path) -> RoasterScrapeResult:
     )
 
 
-def _ctx(tmp_path: Path, **setting_overrides):
+def _ctx(tmp_path: Path, **setting_overrides) -> RunContext:
+    """A real RunContext, so the retry's `replace(ctx, ...)` works and the
+    shared robots cache, 429 gate and seen-product store are the ones a second
+    pass would actually reuse."""
     settings = replace(Settings.defaults(), reports_dir=tmp_path, **setting_overrides)
-    return SimpleNamespace(
+    return RunContext(
         settings=settings,
         logger=logging.getLogger("test-unattended"),
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _request: httpx.Response(200))
+        ),
+        limiter=PerHostLimiter(per_host=1, global_cap=4),
+        seen_products=SeenProducts(tmp_path / "seen.db"),
         run_id="20261018",
+        denylist=set(),
+        assets_dir=tmp_path / "assets",
     )
 
 
@@ -270,7 +282,7 @@ def test_the_second_pass_needs_a_declared_budget(tmp_path: Path, caplog):
                 ctx, roasters, results, ["Gated"], _time.monotonic()
             )
         )
-    assert stats == {"retried": 0, "recovered": 0}
+    assert stats == {"retried": 0, "recovered": 0, "passes": 0}
     assert merged is results and failed == ["Gated"]
     assert "no --run-deadline-s budget declared" in caplog.text
 
@@ -285,11 +297,11 @@ def test_the_second_pass_is_skipped_when_the_budget_is_spent(tmp_path: Path, cap
     # Pretend the first pass already used the whole deadline.
     started_at = _time.monotonic() - 10.0
 
-    with caplog.at_level(logging.WARNING, logger="test-retry-notime"):
+    with caplog.at_level(logging.INFO, logger="test-retry-notime"):
         _merged, _failed, stats = asyncio.run(
             runner._retry_rate_limited(ctx, roasters, results, ["Gated"], started_at)
         )
-    assert stats == {"retried": 0, "recovered": 0}
+    assert stats == {"retried": 0, "recovered": 0, "passes": 0}
     assert "under the 30s needed" in caplog.text
 
 
@@ -313,7 +325,7 @@ def test_a_cooldown_that_would_eat_the_budget_skips_instead(tmp_path: Path, capl
     original = runner.process_roaster
     runner.process_roaster = fail_if_called
     try:
-        with caplog.at_level(logging.WARNING, logger="test-retry-floor"):
+        with caplog.at_level(logging.INFO, logger="test-retry-floor"):
             _merged, _failed, stats = asyncio.run(
                 runner._retry_rate_limited(
                     ctx, roasters, results, ["Gated"],
@@ -322,7 +334,7 @@ def test_a_cooldown_that_would_eat_the_budget_skips_instead(tmp_path: Path, capl
             )
     finally:
         runner.process_roaster = original
-    assert stats == {"retried": 0, "recovered": 0}
+    assert stats == {"retried": 0, "recovered": 0, "passes": 0}
 
 
 def test_a_hosts_retry_after_outranks_our_cooldown(tmp_path: Path, caplog):
@@ -345,7 +357,7 @@ def test_a_hosts_retry_after_outranks_our_cooldown(tmp_path: Path, caplog):
     original = runner.process_roaster
     runner.process_roaster = fail_if_called
     try:
-        with caplog.at_level(logging.WARNING, logger="test-retry-after"):
+        with caplog.at_level(logging.INFO, logger="test-retry-after"):
             _merged, _failed, stats = asyncio.run(
                 runner._retry_rate_limited(
                     ctx, roasters, results, ["Gated"], _time.monotonic()
@@ -353,7 +365,7 @@ def test_a_hosts_retry_after_outranks_our_cooldown(tmp_path: Path, caplog):
             )
     finally:
         runner.process_roaster = original
-    assert stats == {"retried": 0, "recovered": 0}
+    assert stats == {"retried": 0, "recovered": 0, "passes": 0}
     assert "3600s cooldown" in caplog.text
 
 
@@ -403,7 +415,7 @@ def test_a_recovered_roaster_replaces_its_empty_result(tmp_path: Path):
     finally:
         runner.process_roaster = original
 
-    assert stats == {"retried": 1, "recovered": 1}
+    assert stats == {"retried": 1, "recovered": 1, "passes": 1}
     assert [r.status.products_found for r in merged] == [4, 2]
     assert failed == [], "a recovered roaster must leave the failed list"
 
@@ -428,7 +440,7 @@ def test_a_second_refusal_does_not_overwrite_the_first_pass(tmp_path: Path):
     finally:
         runner.process_roaster = original
 
-    assert stats == {"retried": 1, "recovered": 0}
+    assert stats == {"retried": 1, "recovered": 0, "passes": 1}
     assert merged == results
     assert failed == ["Gated"]
 
@@ -442,7 +454,7 @@ def test_the_second_pass_can_be_turned_off(tmp_path: Path):
             ctx, roasters, results, ["Gated"], __import__("time").monotonic()
         )
     )
-    assert stats == {"retried": 0, "recovered": 0}
+    assert stats == {"retried": 0, "recovered": 0, "passes": 0}
 
 
 def test_the_second_pass_count_reaches_the_written_catalog(monkeypatch, tmp_path: Path):
@@ -470,9 +482,134 @@ def test_the_second_pass_count_reaches_the_written_catalog(monkeypatch, tmp_path
     catalog = json.loads(
         (tmp_path / "20261018-catalog.json").read_text(encoding="utf-8")
     )
-    assert catalog["summary"]["second_pass"] == {"retried": 1, "recovered": 1}
+    assert catalog["summary"]["second_pass"] == {
+        "retried": 1,
+        "recovered": 1,
+        "passes": 1,
+    }
     assert catalog["summary"]["failed_roasters"] == []
     # And the brief reads it back out of the real catalog, not a hand-built dict.
     from coffee_watch import brief
 
     assert "second pass: 1 of 1" in "\n".join(brief.coverage(catalog))
+
+
+def test_the_loop_stops_on_the_first_pass_that_recovers_nothing(tmp_path: Path, caplog):
+    """A pass recovering nothing is the signal that the rest are gated.
+
+    Spending further passes on them would just re-ask a host that has said no
+    every time, which is what docs/shopify-bot-gating.md says not to do.
+    """
+    import time as _time
+
+    ctx = _ctx(
+        tmp_path, run_deadline_s=6000.0, retry_cooldown_s=0.0, retry_max_passes=5
+    )
+    ctx.logger = logging.getLogger("test-retry-dry")
+    roasters = [RoasterSource("Gated", "https://gated.example")]
+    results = [_empty_result("Gated", "catalog API returned HTTP 429", tmp_path)]
+    calls = []
+
+    async def always_refuses(ctx_arg, roaster):
+        calls.append(roaster.name)
+        return _empty_result(roaster.name, "catalog API returned HTTP 429", tmp_path)
+
+    original = runner.process_roaster
+    runner.process_roaster = always_refuses
+    try:
+        with caplog.at_level(logging.INFO, logger="test-retry-dry"):
+            _merged, failed, stats = asyncio.run(
+                runner._retry_rate_limited(
+                    ctx, roasters, results, ["Gated"], _time.monotonic()
+                )
+            )
+    finally:
+        runner.process_roaster = original
+
+    assert calls == ["Gated"], "one pass only, despite retry_max_passes=5"
+    assert stats["passes"] == 1 and stats["recovered"] == 0
+    assert failed == ["Gated"]
+    assert "look gated rather than throttled" in caplog.text
+
+
+def test_the_loop_keeps_going_while_passes_keep_recovering(tmp_path: Path):
+    """Each pass only re-asks whoever is still refusing."""
+    import time as _time
+
+    ctx = _ctx(
+        tmp_path, run_deadline_s=6000.0, retry_cooldown_s=0.0, retry_max_passes=5
+    )
+    roasters = [RoasterSource(n, f"https://{n.lower()}.example") for n in ("A", "B", "C")]
+    results = [
+        _empty_result(n, "catalog API returned HTTP 429", tmp_path) for n in ("A", "B", "C")
+    ]
+    # A recovers on pass 1, B on pass 2, C never.
+    recover_on = {"A": 1, "B": 2}
+    passes = {"n": 0}
+    asked: list[tuple[int, str]] = []
+
+    async def staged(ctx_arg, roaster):
+        asked.append((passes["n"], roaster.name))
+        if recover_on.get(roaster.name) == passes["n"]:
+            return _result(roaster.name, 3, tmp_path)
+        return _empty_result(roaster.name, "catalog API returned HTTP 429", tmp_path)
+
+    real_run_roasters = runner._run_roasters
+
+    async def counting_run_roasters(ctx_arg, targets, deadline=None):
+        passes["n"] += 1
+        return await real_run_roasters(ctx_arg, targets, deadline)
+
+    original = runner.process_roaster
+    runner.process_roaster = staged
+    runner._run_roasters = counting_run_roasters
+    try:
+        merged, failed, stats = asyncio.run(
+            runner._retry_rate_limited(
+                ctx, roasters, results, ["A", "B", "C"], _time.monotonic()
+            )
+        )
+    finally:
+        runner.process_roaster = original
+        runner._run_roasters = real_run_roasters
+
+    # Pass 1 asks all three; pass 2 only the two still refusing; pass 3 only C,
+    # recovers nothing, and the loop stops.
+    assert [name for p, name in asked if p == 1] == ["A", "B", "C"]
+    assert [name for p, name in asked if p == 2] == ["B", "C"]
+    assert [name for p, name in asked if p == 3] == ["C"]
+    assert max(p for p, _ in asked) == 3, "must not keep going past a dry pass"
+    assert stats["recovered"] == 2 and stats["passes"] == 3
+    assert [r.status.products_found for r in merged] == [3, 3, 0]
+    assert failed == ["C"]
+
+
+def test_a_retry_pass_keeps_the_normal_request_retries(tmp_path: Path):
+    """Cutting a pass to one attempt was measured worse, so it stays reverted.
+
+    Two runs recovered 4 of 10 roasters with the full three attempts; one run
+    with a single attempt recovered 0 of 9.
+    """
+    import time as _time
+
+    ctx = _ctx(tmp_path, run_deadline_s=6000.0, retry_cooldown_s=0.0)
+    roasters = [RoasterSource("Gated", "https://gated.example")]
+    results = [_empty_result("Gated", "catalog API returned HTTP 429", tmp_path)]
+    seen_retries = []
+
+    async def record(ctx_arg, roaster):
+        seen_retries.append(ctx_arg.settings.http_max_retries)
+        return _result(roaster.name, 1, tmp_path)
+
+    original = runner.process_roaster
+    runner.process_roaster = record
+    try:
+        asyncio.run(
+            runner._retry_rate_limited(
+                ctx, roasters, results, ["Gated"], _time.monotonic()
+            )
+        )
+    finally:
+        runner.process_roaster = original
+
+    assert seen_retries == [ctx.settings.http_max_retries]
