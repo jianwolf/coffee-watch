@@ -98,6 +98,8 @@ def test_skill_keeps_the_rules_that_prevent_wrong_recommendations():
         "Coverage is part of the answer",  # gated roaster read as a weak lineup
         "UNTRUSTED_SCRAPED_TEXT",  # prompt injection via roaster copy
         "purchase-journal.md",  # the only durable state
+        "Flavour notes describe, they do not rank",  # copywriting is not quality
+        "competition result or third-party placing",  # the hardest-to-fake signal
     ):
         assert required in skill, f"{required!r} must stay in the skill"
 

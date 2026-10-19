@@ -232,6 +232,12 @@ def product_flags(product: dict[str, Any]) -> tuple[str, ...]:
     return tuple(flags)
 
 
+# A row whose flavour lives only in the page text printed "notes: -", which
+# reads as "no flavour was captured" and has been reported that way in a real
+# reply. The brief does not parse the text; it says where the text is.
+NOTES_IN_TEXT_HINT = "(in page text, use --detail)"
+
+
 def _notes(product: dict[str, Any]) -> str:
     notes = product.get("tasting_notes")
     if isinstance(notes, list):
@@ -240,6 +246,8 @@ def _notes(product: dict[str, Any]) -> str:
         joined = str(notes or "").strip()
     if len(joined) > NOTES_MAX_CHARS:
         joined = joined[: NOTES_MAX_CHARS - 3].rstrip() + "..."
+    if not joined and product.get("raw_product_text"):
+        return NOTES_IN_TEXT_HINT
     return joined
 
 

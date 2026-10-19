@@ -28,6 +28,15 @@ tasting. The skill may update this file; it should never delete user-written con
   another washed Ethiopia. If nothing qualifies on a given day, say so in one
   line; I would rather read "nothing today" than a menu.
 - Tone: talk to me like a friend texting, not like a report.
+- How recently something was listed does not matter to me. If it tastes good I
+  do not care whether it arrived this week or two months ago. Only use the
+  listing date to avoid telling me about the same coffee twice.
+- Do not use price as a reason to recommend or skip something. I am not rich
+  and I do not look down on cheap coffee - a bargain is not a reason to try a
+  coffee, and an ordinary price is not a reason to leave one out. Show me the
+  price and let me decide.
+- What I want ranked on: how it tastes, and how genuinely rare it is. Those two
+  only.
 - (add taste, budget or roast preferences here as they come up)
 
 ## Watchlist / 关注清单

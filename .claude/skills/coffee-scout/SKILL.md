@@ -152,20 +152,54 @@ Worth interrupting someone for:
   to someone
 
 Those are keywords, and keywords are generous: on a normal catalog a sixth of
-the shelf matches one. They get you a candidate list, not a shortlist. What
-actually cuts it down:
+the shelf matches one. They get you a candidate list, not a shortlist.
 
-- **Is it fresh news?** A lot listed months ago is not something to miss today,
-  whatever its pedigree. Check `published_at` in `--detail`.
-- **Can it be bought as described?** `size-verified` beats `size-unverified`
-  beats a size nobody confirmed.
-- **Is the price actually unusual for this?** You may say a Gesha at $16/100g
-  is a steal, but that is your judgement against coffee you know, not something
-  the catalog told you - so say it in your own voice, not as fact.
+**Rank on evidence of quality, strongest evidence first.** The ordering below
+is by how hard the signal is to fake, not by how good it sounds:
 
-Not worth it: another seasonal washed Ethiopia, a blend restock, a third
-Colombian pink bourbon this month, or anything whose only story is that it is
-new. Rotation is not news.
+- **A competition result or third-party placing.** Cup of Excellence, Best of
+  Panama, an auction lot, a national placing. This is blind-cupped by someone
+  other than the seller, which makes it the only quality claim on the page the
+  seller could not simply have written. About 6% of a catalog has one, which is
+  a shortlist by itself. A stated cupping score would rank here too, but in
+  practice no roaster in this config publishes numbers.
+- **A prized variety**, where the variety genuinely carries cup potential:
+  Gesha, Sudan Rume, SL28, Pacamara, Wush Wush, Eugenioides, Laurina.
+- **Traceability depth.** A named producer or single farm, a stated elevation,
+  a specific variety, and a process described with real detail (hours, stages,
+  temperatures). This is structural: a roaster cannot manufacture it with
+  adjectives, and a fully traceable single lot is a better quality proxy than
+  any amount of prose.
+
+**Flavour notes describe, they do not rank.** How vividly a coffee is written up
+measures the roaster's copywriting, not the coffee: some roasters publish a
+spec sheet for everything and others give you three words, and the description
+is written by the person selling it. Use the notes to tell the user what it
+tastes like and to match what they have said they enjoy. Never treat "violet,
+lychee, dragon fruit" as better evidence than "floral, sweet".
+
+**Two things are explicitly not criteria.**
+
+- **How recently it was listed.** A coffee that tastes good is worth trying
+  whether it appeared this week or two months ago; a listing date is not a
+  roast date, and this project rarely captures roast dates at all. Recency has
+  exactly one job: do not tell the user about the same coffee twice. (If
+  something has been listed over six months and is still sitting there, you may
+  mention that in passing.)
+- **Whether the price is a bargain.** Cheap is not a reason to recommend and
+  ordinary is not a reason to omit. Show size and price so the reader can
+  judge, and keep your own opinion of the value out of the selection.
+
+**Buyability is a caveat, never a gate.** A coffee whose size was not confirmed,
+whose weight came from the API, or that arrived via the Atom feed still belongs
+on the list if it tastes rare and interesting - say what needs checking instead
+of dropping it. The only hard exclusions are sold out and page-blocked, because
+those cannot be bought at all.
+
+Not worth it: a coffee whose only distinction is that it is new, a blend
+restock, or the third interchangeable washed Ethiopia with filler notes.
+Rotation on its own is not news - but a coffee that has been on the shelf a
+while and tastes remarkable is still worth telling the user about.
 
 Shape it loosely, in this order:
 
