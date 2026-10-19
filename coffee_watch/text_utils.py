@@ -132,7 +132,7 @@ SIZE_BUTTON_RE = re.compile(
     re.IGNORECASE,
 )
 SIZE_VALUE_RE = re.compile(
-    r"(?<![$A-Za-z0-9])(\d+(?:\.\d+)?)\s*(kg|g|gram|grams|oz|lb|lbs|pound|pounds)\b",
+    r"(?<![$A-Za-z0-9])(\d+(?:\.\d+)?)\s*(kg|gms|gm|g|gram|grams|oz|lb|lbs|pound|pounds)\b",
     re.IGNORECASE,
 )
 PRODUCT_PAGE_PRICE_RE = re.compile(

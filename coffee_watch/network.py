@@ -44,6 +44,26 @@ _ALLOWED_SCHEMES = frozenset({"http", "https"})
 # Cap server-provided Retry-After delays so a hostile or misconfigured server
 # cannot stall the run with an arbitrarily large value.
 RETRY_AFTER_MAX_S = 60.0
+# Agent sandboxes (Claude Code cloud environments among them) route egress
+# through a proxy that refuses hosts outside the environment allowlist with a
+# 403 carrying this header. That is the sandbox's policy, not the roaster's, and
+# conflating the two turns a one-line allowlist fix into a phantom block.
+PROXY_DENY_HEADER = "x-deny-reason"
+
+
+def log_proxy_denial(response: httpx.Response, log: logging.Logger) -> bool:
+    """Log a sandbox egress refusal distinctly. True when one was detected."""
+    reason = response.headers.get(PROXY_DENY_HEADER, "")
+    if not reason:
+        return False
+    log.error(
+        "Egress proxy refused %s (%s=%s). This is the sandbox network policy, "
+        "not the site: add the host to the environment's allowed domains.",
+        urlsplit(str(response.request.url)).netloc or str(response.request.url),
+        PROXY_DENY_HEADER,
+        reason,
+    )
+    return True
 
 
 def _refuse_reason(url: str, denylist: set[str] | None) -> str | None:
@@ -239,6 +259,8 @@ async def fetch_text_with_jitter(
             return None
         if response is not None:
             log.info("HTTP %s %s", response.status_code, url)
+            if response.status_code >= 400:
+                log_proxy_denial(response, log)
         return response
 
     async def _attempt() -> httpx.Response | None:
@@ -356,7 +378,15 @@ async def fetch_products_for_roaster(
     limiter: PerHostLimiter | None,
     log: logging.Logger,
     denylist: set[str] | None = None,
+    diagnostics: list[str] | None = None,
 ) -> list[ProductCandidate]:
+    """Fetch a roaster's catalog.
+
+    ``diagnostics``, when given, collects why a fetch produced nothing. An
+    empty result otherwise reaches the reader as 'no products parsed', which
+    is both wrong and useless when the truth is a 429 at the catalog API:
+    nothing was ever fetched to parse.
+    """
     max_products = roaster.max_products or settings.max_products_per_source
     pagination = roaster.pagination or PaginationConfig(max_pages=1)
     stop_on_empty = pagination.stop_on_empty
@@ -409,6 +439,8 @@ async def fetch_products_for_roaster(
         )
         if response is None:
             log.warning("Request failed for %s", products_url)
+            if diagnostics is not None:
+                diagnostics.append("catalog request failed (no response)")
             if stop_on_empty:
                 break
             continue
@@ -416,6 +448,13 @@ async def fetch_products_for_roaster(
             log.warning(
                 "Non-200 response %s for %s", response.status_code, products_url
             )
+            if diagnostics is not None:
+                reason = (
+                    "blocked by sandbox egress policy"
+                    if response.headers.get(PROXY_DENY_HEADER)
+                    else f"catalog API returned HTTP {response.status_code}"
+                )
+                diagnostics.append(reason)
             if stop_on_empty:
                 break
             continue

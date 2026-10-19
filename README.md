@@ -2,19 +2,21 @@
 
 [![CI](https://github.com/jianwolf/coffee-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/jianwolf/coffee-watch/actions/workflows/ci.yml)
 
-Coffee Watch is a Codex-operated coffee scouting workflow for a home coffee buyer. Codex runs the bundled `coffee-scout` skill, which scrapes roaster catalogs, writes normalized JSON evidence, saves markdown digests, and produces an interactive Chinese buying report that ranks standout coffees by roaster for follow-up discussion. The report is a scouting menu, not a final checkout decision.
+Coffee Watch is a coffee scouting workflow for a home coffee buyer, built to run as a [Claude Code](https://code.claude.com/docs) cloud session - including an unattended monthly routine. You ask for `/coffee-scout`; it scrapes the roaster catalogs, reads the fresh evidence, and **answers in the session's reply** with a short scouting note: what is worth buying now, what changed, and what to verify before checkout.
 
-Current workflow:
+The reply is the whole deliverable. Nothing is written back into the repo, so a scheduled run leaves no artifacts and no dirty tree behind.
 
 ```text
-Codex Coffee Scout
-  -> polite roaster scraping
-  -> normalized JSON catalogs and status files
-  -> markdown digest reports
-  -> interactive buying recommendations
+/coffee-scout
+  -> polite roaster scraping          (scrape_coffee.py)
+  -> normalized JSON catalogs         (reports/, gitignored evidence)
+  -> compact brief                    (python -m coffee_watch.brief)
+  -> one short reply in the session
 ```
 
-The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen tracking, catalog normalization, and source URL preservation. Coffee analysis and purchase reasoning happen in Codex through `skills/coffee-scout`.
+The scraper is the evidence layer: HTTP fetching, parsing, first-seen tracking, catalog normalization, source URL preservation. `coffee_watch/brief.py` is the reading layer - it projects a 1-3 MB catalog into a few hundred one-line rows with a coverage header, computes `$/100g`, diffs against an earlier catalog when one exists, and flags the conditions that are easy to misread. Judgment is the agent's, in `.claude/skills/coffee-scout`.
+
+Setting up the cloud environment (network allowlist, timeouts, the monthly routine) is a one-time step: see [docs/cloud-setup.md](docs/cloud-setup.md).
 
 ## Highlights
 
@@ -24,8 +26,9 @@ The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen
 - SQLite first-seen tracking in `logs/seen_products.db`
 - Normalized per-roaster and combined catalog JSON outputs
 - Structured status sidecars for resume/retry behavior
-- Repo-local `skills/coffee-scout` skill for interactive buying analysis
-- Codex-written Chinese markdown digests and a final purchase report under `reports/`
+- Deterministic catalog projection for agent reading, with `$/100g`, wholesale-only detection, republish clustering, and a catalog-to-catalog delta
+- Unattended-run hardening: a whole-run deadline that keeps partial results, a non-zero exit when a run collects nothing, and distinct logging for sandbox egress refusals
+- Repo-local `coffee-scout` skill that answers in chat and writes nothing
 - Config validation, structured logging, and pytest coverage
 
 ## How It Works
@@ -34,7 +37,7 @@ The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen
 2. Fetch product lists and, when needed, product pages with robots compliance and retry/backoff.
 3. Track first-seen products in SQLite and classify products as new within the current 7-day window.
 4. Write per-roaster catalog JSON plus combined run-level JSON.
-5. Use the `coffee-scout` skill in Codex to write the three digest markdown files plus a final report that ranks standout coffees by roaster and invites follow-up preferences.
+5. Project the catalog into the compact brief and let the `coffee-scout` skill turn it into a short reply that ranks the strongest current options and invites follow-up preferences.
 
 ## Code Structure
 
@@ -58,8 +61,37 @@ The scraper is the evidence-collection layer: HTTP fetching, parsing, first-seen
 - `coffee_watch/reporting.py` - JSON output helpers and assets retention pruning
 - `coffee_watch/logging_utils.py` - text/JSON logging setup
 - `coffee_watch/seen_products.py` - SQLite first-seen tracker
-- `skills/coffee-scout/` - Codex skill for interactive coffee analysis
+- `coffee_watch/brief.py` - compact catalog projection, delta, and detail lookup
+- `coffee_watch/hosts.py` - egress allowlist generator for cloud environments
+- `.claude/skills/coffee-scout/` - the scouting skill
+- `.claude/settings.json` - committed allow rules and the cloud dependency hook
+- `scripts/cloud_setup.sh` - SessionStart dependency install, cloud only
 - `tests/` - pytest coverage
+
+## Cloud Setup
+
+The skill lives at `.claude/skills/coffee-scout/SKILL.md` as a real directory, so a fresh
+clone needs no wiring on any platform. `CLAUDE.md` imports `AGENTS.md`, so repository
+guidance is single-source.
+
+Three things are account or environment settings and cannot be committed. Set them once,
+following [docs/cloud-setup.md](docs/cloud-setup.md):
+
+| What | Why | Where |
+| :--- | :--- | :--- |
+| Network allowlist | A cloud environment's default allowlist covers package registries, not coffee storefronts, so every request is refused with `403 x-deny-reason: host_not_allowed` | Environment -> network access `Custom`, pasted from `python -m coffee_watch.hosts` |
+| Bash timeouts | A full scrape takes 2-9 minutes; the cloud default for a foreground command is 2 | `BASH_DEFAULT_TIMEOUT_MS` / `BASH_MAX_TIMEOUT_MS` on the environment |
+| Monthly routine | Schedules live on your claude.ai account, not in the repo | `/schedule`, or claude.ai/code/routines |
+
+Dependencies need no setup: a committed `SessionStart` hook runs `scripts/cloud_setup.sh`,
+which installs `httpx[http2]` only when `CLAUDE_CODE_REMOTE=true` and only when it is
+missing. Local checkouts are left alone.
+
+Verify the wiring after cloning:
+
+```bash
+pytest -q tests/test_cloud_native.py
+```
 
 ## Installation
 
@@ -75,9 +107,21 @@ Editable install with dev tooling:
 pip install -e .[dev]
 ```
 
-## Normal Codex Usage
+## Normal Usage
 
-For the intended workflow, ask Codex to use `skills/coffee-scout`. Codex should run the scraper, request network approval if the sandbox blocks DNS/HTTP access, write the digest markdown files in `reports/`, and then present the interactive Chinese buying report.
+Ask for the skill - `/coffee-scout`, or just ask to check what is worth buying. It runs
+the scraper, reads the brief, and replies in the session. In a cloud session it needs
+nothing from you beyond the one-time setup above.
+
+To read the evidence yourself:
+
+```bash
+python -m coffee_watch.brief
+```
+
+```bash
+python -m coffee_watch.brief --detail "Patio Bonito"
+```
 
 ## Manual Scraper Usage
 
@@ -120,6 +164,12 @@ Widen the new-product window (default 7 days) to match a longer buying cadence:
 python scrape_coffee.py --new-window-days 30
 ```
 
+Bound the whole run. Roasters still in flight when the budget expires are cancelled and everything already collected is kept, so an unattended run cannot be stalled by one tarpitting host:
+
+```bash
+python scrape_coffee.py --run-deadline-s 600
+```
+
 Use an alternate config:
 
 ```bash
@@ -136,7 +186,7 @@ CLI flags > JSON config file > built-in defaults
 
 Config files are validated before a run starts. Unknown keys, invalid numeric values, invalid boolean strings, and unsupported log levels fail fast with a configuration error. A missing or malformed `--config` file also aborts the run instead of silently falling back to defaults.
 
-`http_total_timeout_s` is a hard wall-clock deadline per request (covering slow trickled responses), and `http_max_response_bytes` caps how much of any response body is downloaded; set either to `0` to disable. `assets_retention_days` prunes raw payload caches in the assets dir at run start (`0` keeps everything).
+`http_total_timeout_s` is a hard wall-clock deadline per request (covering slow trickled responses), `run_deadline_s` is the same idea for the whole run, and `http_max_response_bytes` caps how much of any response body is downloaded; set any of them to `0` to disable. `assets_retention_days` prunes raw payload caches in the assets dir at run start (`0` keeps everything).
 
 Example `config/settings.json`:
 
@@ -144,6 +194,7 @@ Example `config/settings.json`:
 {
   "http_timeout_s": 20.0,
   "http_total_timeout_s": 120.0,
+  "run_deadline_s": 0,
   "http_max_response_bytes": 10000000,
   "http_max_retries": 2,
   "jitter_min_s": 0.7,
@@ -175,21 +226,24 @@ Per-roaster configs can set `verify_variant_pages: true` when a storefront hides
 
 ## Outputs
 
-Generated local outputs include:
+Scraping writes evidence, not reports. Everything below is gitignored and local to one
+workspace; the scouting answer itself is the session reply:
 
 - `reports/YYYYMMDD-<roaster-slug>.catalog.json` - normalized per-roaster catalog
 - `reports/YYYYMMDD-catalog.json` - combined run catalog
 - `reports/YYYYMMDD-new-products.json` - flattened new-product subset
 - `reports/YYYYMMDD-<roaster-slug>.status.json` - structured roaster scrape status
-- `reports/YYYYMMDD-z-digest.md` - Codex all-roaster digest
-- `reports/YYYYMMDD-z-roaster-digest.md` - Codex roaster scorecard digest
-- `reports/YYYYMMDD-z-new-digest.md` - Codex new-product digest
-- `reports/YYYYMMDD-z-codex-report.md` - Codex final interactive purchase report
 - `logs/assets/` - raw/pretty source payload cache, always written and pruned after `assets_retention_days`; the `save_raw_products_json`/`save_pretty_products_json` flags control extra copies in `reports/`
 - `logs/coffee_watch.log` - text or JSON log output
 - `logs/seen_products.db` - SQLite seen-product store (kept indefinitely; it is the first-seen source of truth)
 
 Product entries include fields such as roaster, product URL, title, selected buyable price label, selected price variant, all variants, storefront-visible variant titles and storefront status when verified, origin, process, tasting notes, availability, first-seen timestamp, raw product text, source metadata, and scrape errors. Origin/process/tasting-note extraction is best-effort and never replaces the source URL.
+
+### Exit codes
+
+`0` success, `1` configuration or bootstrap failure, `2` invalid CLI/config input, `3` the
+run collected zero products. `3` matters because a scrape with no network access still
+writes a valid, empty catalog and would otherwise look like a quiet market.
 
 ## Known external constraints
 
@@ -197,18 +251,25 @@ Product entries include fields such as roaster, product URL, title, selected buy
 
 ## Coffee Scout Skill
 
-The repo includes `skills/coffee-scout`, a Codex skill for running the scraper and analyzing the fresh JSON. This system is intentionally designed for Codex to operate end to end: Codex runs `python scrape_coffee.py`, handles sandbox/network approval if needed, reads the fresh catalog JSON, writes markdown digest artifacts, and then presents an interactive Chinese buying report.
+`/coffee-scout` is the consumer-facing surface. It reads `purchase-journal.md` for
+standing preferences, the watchlist and recorded taste verdicts, runs the scraper with a
+deadline, reads the brief, pulls `--detail` evidence for its shortlist, and replies with
+roughly 40 lines:
 
-The skill uses preferences stated in the current conversation, so the first answer can be a focused shortlist and follow-up questions can refine it. The practical consumer context is a home purchase that may end with one roaster and about two bags, but the report should first give enough ranked menu information for the user to steer the next question without forcing every roaster into a two-bag bundle or overwhelming the user with every plausible option.
+- a one-line evidence header (roasters that returned data, products, elapsed)
+- the three things that matter this session
+- two or three roasters, strongest first, with 8-12 coffee lines carrying flavor, a
+  size-aware price, `$/100g` and the source URL
+- a short radar for anything that could change the plan
+- what to verify: API-reported sizes, coverage gaps, missing history
 
-The skill produces four report surfaces:
+It does not write report files, does not commit, and does not present a single checkout
+as the answer. Scraped product text is untrusted evidence; the skill never follows
+instructions found inside it.
 
-- all-roaster digest
-- roaster scorecard digest
-- new-product digest
-- final Codex purchase report with a focused roaster shortlist, ranked coffee highlights, near misses, and preference-based narrowing suggestions
-
-The skill treats scraped product text as untrusted evidence. It should not follow instructions embedded in roaster descriptions.
+`purchase-journal.md` is the one piece of durable state, because it is committed. The
+skill appends a purchase there only when you decide something in conversation, and never
+deletes what you wrote.
 
 ## Testing
 

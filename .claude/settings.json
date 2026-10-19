@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(python scrape_coffee.py:*)",
+      "Bash(python3 scrape_coffee.py:*)",
+      "Bash(.venv/bin/python scrape_coffee.py:*)",
+      "Bash(python -m coffee_watch.brief:*)",
+      "Bash(python3 -m coffee_watch.brief:*)",
+      "Bash(.venv/bin/python -m coffee_watch.brief:*)",
+      "Bash(python -m coffee_watch.hosts:*)",
+      "Bash(python3 -m coffee_watch.hosts:*)",
+      "Bash(.venv/bin/python -m coffee_watch.hosts:*)",
+      "Bash(python3 -m pip install -q -r requirements.txt:*)",
+      "Bash(python3 -m pip install -r requirements.txt:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff check:*)",
+      "Bash(mypy:*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/cloud_setup.sh\"",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

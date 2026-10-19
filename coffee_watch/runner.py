@@ -34,6 +34,43 @@ from .reporting import (
 from .roaster_pipeline import RoasterScrapeResult, process_roaster
 from .seen_products import SeenProducts
 
+# A run that collected nothing still writes a valid, empty catalog, so the
+# exit code is the only place it can be distinguished from a quiet week. This
+# matters most unattended, where nobody reads the log unless something says to.
+EMPTY_RUN_EXIT_CODE = 3
+
+
+def _elapsed_since(started_at: float) -> float:
+    return time.monotonic() - started_at if started_at else 0.0
+
+
+def _report_coverage(
+    products: int,
+    roaster_count: int,
+    failed_roasters: list[str],
+    log: logging.Logger,
+) -> int:
+    """Log what the run actually collected and map it to an exit code."""
+    if products == 0:
+        log.error(
+            "Collected 0 products from %d configured roasters. The catalog is "
+            "empty, not quiet: check logs for 'host_not_allowed' (sandbox egress "
+            "policy), 429 (bot gating), or robots/DNS failures before treating "
+            "this run as evidence.",
+            roaster_count,
+        )
+        return EMPTY_RUN_EXIT_CODE
+    if failed_roasters:
+        log.warning(
+            "Partial coverage: %d of %d roasters returned nothing (%s). Products "
+            "collected: %d.",
+            len(failed_roasters),
+            roaster_count,
+            ", ".join(failed_roasters),
+            products,
+        )
+    return 0
+
 
 async def _run_roasters(
     ctx: RunContext,
@@ -41,25 +78,48 @@ async def _run_roasters(
 ) -> tuple[list[RoasterScrapeResult], list[str]]:
     if not target_roasters:
         return [], []
-    tasks = [
-        asyncio.create_task(process_roaster(ctx, roaster))
+    tasks = {
+        asyncio.create_task(process_roaster(ctx, roaster)): roaster
         for roaster in target_roasters
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    }
+    deadline = ctx.settings.run_deadline_s
+    # asyncio.wait rather than gather: when the budget runs out, roasters that
+    # already finished are kept and only the stragglers are cancelled. An
+    # unattended run would rather have a partial catalog than nothing.
+    _done, pending = await asyncio.wait(
+        tasks.keys(), timeout=deadline if deadline > 0 else None
+    )
+    if pending:
+        ctx.logger.error(
+            "Run deadline of %.0fs reached; cancelling %d roaster(s) still in "
+            "flight: %s",
+            deadline,
+            len(pending),
+            ", ".join(sorted(tasks[task].name for task in pending)),
+        )
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+
     scrape_results: list[RoasterScrapeResult] = []
     failed_names: list[str] = []
-    for roaster, result in zip(target_roasters, results, strict=True):
-        # BaseException, not Exception: gather() also hands back
-        # CancelledError, which must not be mistaken for a scrape result.
-        if isinstance(result, BaseException):
+    for task, roaster in tasks.items():
+        if task.cancelled():
+            failed_names.append(roaster.name)
+            continue
+        error = task.exception()
+        # BaseException, not Exception: a cancelled or hard-failed task must
+        # not be mistaken for a scrape result.
+        if error is not None:
             ctx.logger.error(
                 "Roaster task for %s raised: %s",
                 roaster.name,
-                result,
-                exc_info=result,
+                error,
+                exc_info=error,
             )
             failed_names.append(roaster.name)
             continue
+        result = task.result()
         scrape_results.append(result)
         if result.status.status in {"failure", "empty"}:
             failed_names.append(roaster.name)
@@ -72,6 +132,7 @@ def _write_run_catalogs(
     roaster_catalogs: list[dict[str, Any]],
     failed_roasters: list[str],
     log: logging.Logger,
+    elapsed_s: float = 0.0,
 ) -> tuple[int, int]:
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     combined = build_combined_catalog(
@@ -81,6 +142,7 @@ def _write_run_catalogs(
         denylist_path=str(settings.denylist_path),
         roaster_catalogs=roaster_catalogs,
         failed_roasters=failed_roasters,
+        elapsed_s=elapsed_s,
     )
     combined_path = save_json(
         combined_catalog_path(settings.reports_dir, run_id),
@@ -102,6 +164,7 @@ def _write_run_catalogs(
 async def _run_resume(
     ctx: RunContext,
     roasters: list[RoasterSource],
+    started_at: float = 0.0,
 ) -> int:
     settings = ctx.settings
     log = ctx.logger
@@ -129,21 +192,31 @@ async def _run_resume(
             ", ".join(missing_roasters),
         )
     failed = merge_failed_roaster_names(failed_roasters, missing_roasters)
-    _write_run_catalogs(settings, ctx.run_id, catalogs, failed, log)
-    return 0
+    products, _new_products = _write_run_catalogs(
+        settings, ctx.run_id, catalogs, failed, log, _elapsed_since(started_at)
+    )
+    return _report_coverage(products, len(roasters), failed, log)
 
 
 async def _run_full(
     ctx: RunContext,
     roasters: list[RoasterSource],
+    started_at: float = 0.0,
 ) -> int:
     results, failed_roasters = await _run_roasters(ctx, roasters)
     catalogs = [result.catalog for result in results if result.catalog]
     if not catalogs:
         ctx.logger.error("No roaster catalogs were written for %s.", ctx.run_id)
         return 1
-    _write_run_catalogs(ctx.settings, ctx.run_id, catalogs, failed_roasters, ctx.logger)
-    return 0
+    products, _new_products = _write_run_catalogs(
+        ctx.settings,
+        ctx.run_id,
+        catalogs,
+        failed_roasters,
+        ctx.logger,
+        _elapsed_since(started_at),
+    )
+    return _report_coverage(products, len(roasters), failed_roasters, ctx.logger)
 
 
 async def run(settings: Settings) -> int:
@@ -196,9 +269,9 @@ async def run(settings: Settings) -> int:
                 assets_dir=settings.assets_dir,
             )
             if settings.resume:
-                exit_code = await _run_resume(ctx, roasters)
+                exit_code = await _run_resume(ctx, roasters, t_start)
             else:
-                exit_code = await _run_full(ctx, roasters)
+                exit_code = await _run_full(ctx, roasters, t_start)
     finally:
         seen_products.close()
 

@@ -22,8 +22,13 @@ def _clean(value: str) -> str:
 # without punctuation ("...Peach, Key Lime Origin: El Paraiso Variety: ...");
 # a captured value must stop at the next field label or it swallows the rest
 # of the spec sheet.
+#
+# The separator is whitespace, or nothing at all: stripping block-level tags can
+# glue the last note to the next label ("...Blueberry, SweetOrigin: Ethiopia"),
+# so a lowercase-to-label transition counts as a boundary too. The label must
+# still be followed by its colon or pipe, which keeps this off ordinary words.
 _FIELD_BOUNDARY = re.compile(
-    r"\s+(?:origin|region|country|variety|varietal|varieties|producer|producers|"
+    r"(?:\s+|(?<=[a-z]))(?:origin|region|country|variety|varietal|varieties|producer|producers|"
     r"farm|co-op|coop|elevation|altitude|process|processing|harvest|method|roast|"
     r"importer|sourced\s+by|cup\s+profile|current\s+components|components|"
     r"farm\s+gate\s+price|fob\s+price|notes?)\s*[:|]",
@@ -389,6 +394,7 @@ def build_combined_catalog(
     denylist_path: str,
     roaster_catalogs: list[dict[str, Any]],
     failed_roasters: list[str],
+    elapsed_s: float = 0.0,
 ) -> dict[str, Any]:
     products = [
         product
@@ -420,6 +426,9 @@ def build_combined_catalog(
             "products": len(products),
             "new_products": sum(1 for product in products if product.get("is_new")),
             "failed_roasters": failed_roasters,
+            # The reply has to show what the run cost; reading it off the
+            # catalog beats grepping a log that a fresh clone may not have.
+            "elapsed_s": round(elapsed_s, 1),
         },
         "roasters": roasters,
         "products": products,

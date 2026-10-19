@@ -18,6 +18,7 @@ class ConfigError(ValueError):
 class Settings:
     http_timeout_s: float
     http_total_timeout_s: float
+    run_deadline_s: float
     http_max_response_bytes: int
     http_max_retries: int
     jitter_min_s: float
@@ -57,6 +58,8 @@ class Settings:
             issues.append("http_timeout_s must be > 0")
         if self.http_total_timeout_s < 0:
             issues.append("http_total_timeout_s must be >= 0 (0 disables the deadline)")
+        if self.run_deadline_s < 0:
+            issues.append("run_deadline_s must be >= 0 (0 disables the deadline)")
         if self.http_max_response_bytes < 0:
             issues.append("http_max_response_bytes must be >= 0 (0 disables the cap)")
         if self.http_max_retries < 0:
@@ -91,6 +94,7 @@ class Settings:
         return Settings(
             http_timeout_s=20.0,
             http_total_timeout_s=120.0,
+            run_deadline_s=0.0,
             http_max_response_bytes=10_000_000,
             http_max_retries=2,
             jitter_min_s=0.7,
@@ -143,6 +147,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--http-total-timeout-s",
         type=float,
         help="Hard deadline per HTTP request in seconds, including all reads (0 disables)",
+    )
+    parser.add_argument(
+        "--run-deadline-s",
+        type=float,
+        help=(
+            "Wall-clock budget for the whole scrape in seconds; roasters still "
+            "running are cancelled and reported as incomplete (0 disables). Use "
+            "this for unattended runs, where one tarpitting host would otherwise "
+            "stall the job."
+        ),
     )
     parser.add_argument(
         "--http-max-response-bytes",
@@ -325,6 +339,7 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
         http_total_timeout_s=_as_float(
             "http_total_timeout_s", pick_value("http_total_timeout_s")
         ),
+        run_deadline_s=_as_float("run_deadline_s", pick_value("run_deadline_s")),
         http_max_response_bytes=_as_int(
             "http_max_response_bytes", pick_value("http_max_response_bytes")
         ),

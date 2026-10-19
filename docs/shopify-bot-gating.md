@@ -1,6 +1,46 @@
 # Shopify Storefront Bot-Gating (first observed 2026-06-10)
 
-Status: **active as of 2026-06-10**. Re-check with each run; update this doc when behavior changes.
+Status: **escalated 2026-10-18 — the catalog API is now gated too.** Re-check with each
+run; update this doc when behavior changes.
+
+## Escalation, 2026-10-18
+
+The 2026-10-18 run saw 429 on `GET /collections/{handle}/products.json` itself — the
+endpoint that was explicitly unaffected in June. 13 hosts returned 429 for the catalog
+API; retries recovered two of them (Passenger, Black & White), and **11 of 17 roasters
+finished the run with zero products**:
+
+Prodigal, Onyx, Hydrangea, Flower Child, La Cabra, Regalia, Ilse, Dayglow, Heart,
+George Howell, Olympia.
+
+Run totals: 127×200, 37×429, 2×401, 104 products from 6 roasters, 125.6 s. Compare
+2026-09-01: 371 products from 17/17 roasters.
+
+Coverage is a per-run lottery, not a stable per-store flag. A second full run two hours
+later got 140 products from 8/17 — a *different* survivor set (Onyx, Olympia, Hydrangea
+and Ilse came back; Black & White, Passenger and Proud Mary dropped out). A third,
+two-roaster run another twenty minutes on got 429 for both, including Little Wolf, which
+had served 15 products in the first run. Caveat on that third data point: it was the
+third scrape from one IP in one evening, against a project whose whole premise is
+low-frequency monitoring, so it is not evidence of a cold-IP baseline. The first run is:
+it was the first scrape since 2026-09-01 and 11 of 17 roasters already returned nothing.
+
+Consequences, in order of importance:
+
+1. **The "not affected" column below no longer holds.** Catalog coverage, not just
+   storefront verification, is now degraded. A gated roaster contributes nothing.
+2. **A degraded run looks like a quiet market.** The run still exited 0 and wrote a
+   valid catalog. That is why `coffee_watch/runner.py` now exits `3` on a zero-product
+   run and logs partial coverage as a warning, and why
+   `python -m coffee_watch.brief` leads with a coverage header naming every empty
+   roaster. Any report that omits coverage is wrong, not merely incomplete.
+3. **Catalog-to-catalog deltas need a coverage guard.** A roaster that returned nothing
+   makes its whole previous lineup look sold out. `brief.compute_delta` excludes
+   products from roasters with no products this run and counts them as unknown.
+4. The response policy below is unchanged: no UA spoofing, record the evidence, back
+   off. The fast-skip gate still applies to page fetches only; catalog API and
+   robots.txt requests deliberately do not consult it, so a transient API 429 is still
+   retried rather than skipped for the rest of the run.
 
 ## What happened
 
@@ -64,6 +104,10 @@ toward Shopify-controlled structured channels (products.json, UCP/MCP, shop.app)
 quietly throttling HTML.
 
 ## Impact on coffee-watch data
+
+The table below describes the 2026-06-10 state. As of 2026-10-18 the right-hand column
+is no longer accurate for gated stores: the catalog API is gated for most of them, so
+they contribute no products at all. See the escalation section above.
 
 | Affected | Not affected |
 | :--- | :--- |
