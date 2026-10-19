@@ -170,14 +170,14 @@ Bound the whole run. Roasters still in flight when the budget expires are cancel
 python scrape_coffee.py --run-deadline-s 600
 ```
 
-Inside that budget, roasters whose catalog API rate-limited us get one more attempt after a cooldown. Which stores are gated changes minute to minute, and a full run typically uses a third of its deadline, so the idle remainder pays for the retry. It needs a declared deadline — with none there is no idle remainder to spend, and the pass is skipped rather than making every run longer:
+Inside that budget, roasters whose catalog API rate-limited us get one more attempt after a cooldown. Which stores are gated changes minute to minute, and a full run typically uses a third of its deadline, so the idle remainder pays for the retry. It needs a declared deadline — with none there is no idle remainder to spend, and the pass is skipped rather than making every run longer. The cooldown is a floor, not a remainder: if waiting it out would not leave real working time, the attempt is skipped instead of being sent and cancelled. A host's own `Retry-After` overrides the configured cooldown:
 
 ```bash
 python scrape_coffee.py --run-deadline-s 600 --retry-cooldown-s 120
 ```
 
 ```bash
-python scrape_coffee.py --no-retry-empty-roasters
+python scrape_coffee.py --no-retry-rate-limited-roasters
 ```
 
 Only a retryable catalog-API status (429, 5xx) qualifies. A roaster skipped at the robots gate is never retried — honouring `robots.txt` is the point, not an error — and neither is a sandbox egress refusal, which will not change mid-run.
@@ -207,7 +207,7 @@ Example `config/settings.json`:
   "http_timeout_s": 20.0,
   "http_total_timeout_s": 120.0,
   "run_deadline_s": 0,
-  "retry_empty_roasters": true,
+  "retry_rate_limited_roasters": true,
   "retry_cooldown_s": 120.0,
   "http_max_response_bytes": 10000000,
   "http_max_retries": 2,

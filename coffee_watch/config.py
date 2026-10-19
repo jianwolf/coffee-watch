@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ class Settings:
     http_timeout_s: float
     http_total_timeout_s: float
     run_deadline_s: float
-    retry_empty_roasters: bool
+    retry_rate_limited_roasters: bool
     retry_cooldown_s: float
     http_max_response_bytes: int
     http_max_retries: int
@@ -62,8 +63,10 @@ class Settings:
             issues.append("http_total_timeout_s must be >= 0 (0 disables the deadline)")
         if self.run_deadline_s < 0:
             issues.append("run_deadline_s must be >= 0 (0 disables the deadline)")
-        if self.retry_cooldown_s < 0:
-            issues.append("retry_cooldown_s must be >= 0")
+        if self.retry_cooldown_s < 0 or not math.isfinite(self.retry_cooldown_s):
+            issues.append("retry_cooldown_s must be a finite value >= 0")
+        if not math.isfinite(self.run_deadline_s):
+            issues.append("run_deadline_s must be finite")
         if self.http_max_response_bytes < 0:
             issues.append("http_max_response_bytes must be >= 0 (0 disables the cap)")
         if self.http_max_retries < 0:
@@ -99,7 +102,7 @@ class Settings:
             http_timeout_s=20.0,
             http_total_timeout_s=120.0,
             run_deadline_s=0.0,
-            retry_empty_roasters=True,
+            retry_rate_limited_roasters=True,
             retry_cooldown_s=120.0,
             http_max_response_bytes=10_000_000,
             http_max_retries=2,
@@ -232,7 +235,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     add_bool_flag(
         parser,
-        "retry-empty-roasters",
+        "retry-rate-limited-roasters",
         "re-attempt roasters whose catalog API rate-limited us, after a cooldown",
         None,
     )
@@ -361,8 +364,8 @@ def build_settings(args: argparse.Namespace, config: dict[str, Any]) -> Settings
             "http_total_timeout_s", pick_value("http_total_timeout_s")
         ),
         run_deadline_s=_as_float("run_deadline_s", pick_value("run_deadline_s")),
-        retry_empty_roasters=_as_bool(
-            "retry_empty_roasters", pick_value("retry_empty_roasters")
+        retry_rate_limited_roasters=_as_bool(
+            "retry_rate_limited_roasters", pick_value("retry_rate_limited_roasters")
         ),
         retry_cooldown_s=_as_float(
             "retry_cooldown_s", pick_value("retry_cooldown_s")

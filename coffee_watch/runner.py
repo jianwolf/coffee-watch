@@ -46,7 +46,13 @@ EMPTY_RUN_EXIT_CODE = 3
 # finishes in a third of its deadline, and that idle remainder is what pays for
 # a second attempt.
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# The second pass has to be worth making: a cooldown that eats the whole
+# remaining budget would re-request a host that just refused us and then
+# cancel mid-flight. Unless this much working time survives the cooldown,
+# skipping is the polite answer.
+RETRY_MIN_WORK_S = 30.0
 _CATALOG_STATUS_RE = re.compile(r"catalog API returned HTTP (\d{3})")
+_RETRY_AFTER_RE = re.compile(r"Retry-After: (\d+)")
 
 
 def _elapsed_since(started_at: float) -> float:
@@ -94,13 +100,15 @@ async def _run_roasters(
         for roaster in target_roasters
     }
     if deadline is None:
-        deadline = ctx.settings.run_deadline_s
+        # In settings, 0 means "no deadline configured"; as an argument it means
+        # "the budget is spent". Translate the former into the latter's None so
+        # the two cannot be confused: `None` is the only way to say "no limit",
+        # and a numeric 0 cancels immediately instead of waiting forever.
+        deadline = ctx.settings.run_deadline_s or None
     # asyncio.wait rather than gather: when the budget runs out, roasters that
     # already finished are kept and only the stragglers are cancelled. An
     # unattended run would rather have a partial catalog than nothing.
-    _done, pending = await asyncio.wait(
-        tasks.keys(), timeout=deadline if deadline > 0 else None
-    )
+    _done, pending = await asyncio.wait(tasks.keys(), timeout=deadline)
     if pending:
         ctx.logger.error(
             "Run deadline of %.0fs reached; cancelling %d roaster(s) still in "
@@ -138,7 +146,6 @@ async def _run_roasters(
     return scrape_results, failed_names
 
 
-
 def _rate_limited_roasters(
     results: list[RoasterScrapeResult],
     roasters: list[RoasterSource],
@@ -155,13 +162,24 @@ def _rate_limited_roasters(
     for result in results:
         if result.status.products_found:
             continue
-        match = _CATALOG_STATUS_RE.search(result.status.note or "")
-        if not match or int(match.group(1)) not in RETRY_STATUSES:
+        # A paginated roaster accumulates several diagnostics, so retryability
+        # must not depend on which one happens to come first.
+        codes = {
+            int(code)
+            for code in _CATALOG_STATUS_RE.findall(result.status.note or "")
+        }
+        if not codes & RETRY_STATUSES:
             continue
         roaster = by_name.get(result.status.roaster)
         if roaster is not None:
             targets.append(roaster)
     return targets
+
+
+def _requested_backoff(result: RoasterScrapeResult) -> float:
+    """The largest Retry-After a roaster asked for, in seconds, or 0."""
+    values = _RETRY_AFTER_RE.findall(result.status.note or "")
+    return max((float(value) for value in values), default=0.0)
 
 
 def _remaining_budget(settings: Settings, started_at: float) -> float | None:
@@ -187,7 +205,7 @@ async def _retry_rate_limited(
     settings = ctx.settings
     log = ctx.logger
     stats = {"retried": 0, "recovered": 0}
-    if not settings.retry_empty_roasters:
+    if not settings.retry_rate_limited_roasters:
         return results, failed_roasters, stats
     targets = _rate_limited_roasters(results, roasters)
     if not targets:
@@ -201,14 +219,26 @@ async def _retry_rate_limited(
             len(targets),
         )
         return results, failed_roasters, stats
-    cooldown = min(settings.retry_cooldown_s, max(0.0, budget - 1.0))
-    if budget - cooldown <= 0:
+
+    # A host that told us how long to wait outranks our own cooldown.
+    asked_for = max(
+        (_requested_backoff(result) for result in results),
+        default=0.0,
+    )
+    cooldown = max(settings.retry_cooldown_s, asked_for)
+    work = budget - cooldown
+    # `not (work >= ...)` rather than `<`, so a NaN budget skips instead of
+    # sliding through the comparison.
+    if not (work >= RETRY_MIN_WORK_S):
         log.warning(
-            "Second pass skipped for %d rate-limited roaster(s): %.0fs of budget "
-            "left, not enough for a %.0fs cooldown plus the work.",
+            "Second pass skipped for %d rate-limited roaster(s): a %.0fs cooldown "
+            "leaves %.0fs of the %.0fs budget, under the %.0fs needed to make the "
+            "attempt worth sending.",
             len(targets),
+            cooldown,
+            work,
             budget,
-            settings.retry_cooldown_s,
+            RETRY_MIN_WORK_S,
         )
         return results, failed_roasters, stats
 
@@ -221,9 +251,7 @@ async def _retry_rate_limited(
         budget,
     )
     await asyncio.sleep(cooldown)
-    retry_results, _retry_failed = await _run_roasters(
-        ctx, targets, deadline=max(0.0, budget - cooldown)
-    )
+    retry_results, _retry_failed = await _run_roasters(ctx, targets, deadline=work)
     stats["retried"] = len(targets)
 
     # Keep a retry only where it actually produced something: a second refusal
@@ -234,18 +262,27 @@ async def _retry_rate_limited(
         if result.status.products_found
     }
     stats["recovered"] = len(better)
+    recovered_names = sorted(better)
     if not better:
         log.info("Second pass recovered nothing.")
         return results, failed_roasters, stats
 
     log.info(
         "Second pass recovered %d of %d roaster(s): %s",
-        len(better),
+        len(recovered_names),
         len(targets),
-        ", ".join(sorted(better)),
+        ", ".join(recovered_names),
     )
-    merged = [better.get(result.status.roaster, result) for result in results]
-    remaining_failed = [name for name in failed_roasters if name not in better]
+    # Keyed by position, not by name: two config entries sharing a name would
+    # otherwise both be replaced by the same retry result and double-count it.
+    merged = list(results)
+    for index, result in enumerate(results):
+        replacement = better.pop(result.status.roaster, None)
+        if replacement is not None:
+            merged[index] = replacement
+    remaining_failed = [
+        name for name in failed_roasters if name not in set(recovered_names)
+    ]
     return merged, remaining_failed, stats
 
 
@@ -329,9 +366,17 @@ async def _run_full(
     started_at: float = 0.0,
 ) -> int:
     results, failed_roasters = await _run_roasters(ctx, roasters)
-    results, failed_roasters, retry_stats = await _retry_rate_limited(
-        ctx, roasters, results, failed_roasters, started_at
-    )
+    try:
+        results, failed_roasters, retry_stats = await _retry_rate_limited(
+            ctx, roasters, results, failed_roasters, started_at
+        )
+    except Exception:
+        # The retry sits between collecting results and writing them, so a
+        # failure here would otherwise throw away a scrape that succeeded.
+        ctx.logger.exception(
+            "Second pass failed; keeping the first pass's results."
+        )
+        retry_stats = {"retried": 0, "recovered": 0}
     catalogs = [result.catalog for result in results if result.catalog]
     if not catalogs:
         ctx.logger.error("No roaster catalogs were written for %s.", ctx.run_id)

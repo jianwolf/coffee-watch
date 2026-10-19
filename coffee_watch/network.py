@@ -483,11 +483,15 @@ async def fetch_products_for_roaster(
                 "Non-200 response %s for %s", response.status_code, products_url
             )
             if diagnostics is not None:
-                reason = (
-                    "blocked by sandbox egress policy"
-                    if response.headers.get(PROXY_DENY_HEADER)
-                    else f"catalog API returned HTTP {response.status_code}"
-                )
+                if response.headers.get(PROXY_DENY_HEADER):
+                    reason = "blocked by sandbox egress policy"
+                else:
+                    reason = f"catalog API returned HTTP {response.status_code}"
+                    # A host that says how long to wait outranks our own
+                    # cooldown, so the figure has to survive into the status.
+                    retry_after = response.headers.get("retry-after", "").strip()
+                    if retry_after.isdigit():
+                        reason = f"{reason} (Retry-After: {retry_after})"
                 diagnostics.append(reason)
             if stop_on_empty:
                 break
