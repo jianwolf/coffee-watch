@@ -229,12 +229,40 @@ def product_flags(product: dict[str, Any]) -> tuple[str, ...]:
         flags.append("scrape-err")
     if not product.get("tasting_notes") and product.get("raw_product_text"):
         flags.append("notes-in-text")
+    if mentions_competition(product):
+        flags.append("COMP-MENTION")
     return tuple(flags)
+
+
+def mentions_competition(product: dict[str, Any]) -> bool:
+    """Whether the page mentions a competition result anywhere.
+
+    Deliberately a mention and not a finding: the match may belong to the
+    farm's history, a neighbouring lot or a subscription blurb. Confirming
+    that the placing is this lot's is the agent's job, with --detail.
+    """
+    haystack = " ".join(
+        str(product.get(field) or "")
+        for field in ("title", "origin", "process", "raw_product_text")
+    )
+    return bool(COMPETITION_RE.search(haystack))
 
 
 # A row whose flavour lives only in the page text printed "notes: -", which
 # reads as "no flavour was captured" and has been reported that way in a real
 # reply. The brief does not parse the text; it says where the text is.
+# A third-party placing is the one quality claim on a product page the seller
+# could not have written, so it is worth surfacing mechanically rather than
+# leaving the reader to grep for it. This is a *mention*, not a verdict: the
+# phrase can belong to a neighbouring lot, the farm's history or a
+# subscription blurb, so the flag says "check this" and the agent confirms
+# against --detail that the placing belongs to this coffee.
+COMPETITION_RE = re.compile(
+    r"cup of excellence|\bCOE\b|best of panama|\bBOP\b|auction lot|"
+    r"(?:1st|2nd|3rd|first|second|third)[- ]place|national winner",
+    re.IGNORECASE,
+)
+
 NOTES_IN_TEXT_HINT = "(in page text, use --detail)"
 
 
@@ -472,6 +500,18 @@ def coverage(catalog: dict[str, Any]) -> list[str]:
             f"per-variant size, price or stock, so no $/100g and availability is "
             f"unknown - do not present them as purchasable sizes, and the feed is "
             f"capped at each roaster's newest 25 products"
+        )
+    comp = sum(
+        1
+        for product in _products(catalog)
+        if product.get("availability") == "available" and mentions_competition(product)
+    )
+    if comp:
+        lines.append(
+            f"competition mentions: {comp} available product(s) name a third-party "
+            f"placing somewhere on the page (COMP-MENTION). The phrase may belong "
+            f"to the farm's history or a neighbouring lot - confirm with --detail "
+            f"that it is this coffee's"
         )
     second = _mapping(summary.get("second_pass"))
     if second.get("retried"):
