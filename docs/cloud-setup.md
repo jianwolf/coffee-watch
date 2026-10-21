@@ -90,7 +90,39 @@ script** field instead; snapshotted setup is cached, a hook is not. You must do
 that for a session with more than one repository: a multi-repo cloud session
 loads neither hooks nor permission rules from any repo's `.claude/settings.json`.
 
-## 4. A monthly routine
+## 4. Getting the note to your phone
+
+A routine cannot notify you on its own. Push notifications belong to Remote
+Control, which runs `claude` on your own machine; a routine is a cloud session,
+so its `PushNotification` call is accepted and delivered nowhere. Verified
+twice: both runs logged `Mobile push requested.` and nothing arrived. There is
+no documented completion notification for a scheduled cloud run at all.
+
+Outbound HTTP is the one channel a cloud run does have, so delivery is
+something the run sends itself. `scripts/notify_discord.py` posts a note to a
+Discord channel webhook - stdlib only, split to Discord's 2000-character limit,
+which fits a whole scouting note rather than a 200-character headline.
+
+Create a webhook in Discord (channel settings -> Integrations -> Webhooks ->
+New Webhook), set that channel's notifications to All Messages, and give the
+routine the URL. **The URL is a credential and must never be committed** -
+anyone holding it can post to that channel, and this repository is public.
+`tests/test_notify_discord.py` fails if a real webhook URL appears anywhere in
+the tree. Put it in the routine prompt, or as a `COFFEE_DISCORD_WEBHOOK`
+environment variable on the cloud environment, remembering that anyone who can
+use that environment can read its variables.
+
+Check the wiring without sending anything:
+
+```bash
+echo "hello" | python3 scripts/notify_discord.py --dry-run
+```
+
+Exit codes are distinct on purpose: `3` means no webhook was configured, `1`
+means the post failed. A run that scouted correctly but could not deliver is
+not the same failure as a run that found nothing.
+
+## 4b. A monthly routine
 
 The scouting cadence is about once a month. Routines hold the schedule on your
 claude.ai account, not in this repo.
