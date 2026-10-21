@@ -123,3 +123,35 @@ def test_the_repo_contains_no_webhook_url():
         text = path.read_text(encoding="utf-8", errors="replace")
         found = real_webhook.search(text)
         assert not found, f"a real webhook URL is committed in {path}"
+
+
+def test_link_previews_are_suppressed_by_default(monkeypatch):
+    """Discord unfurled every bare URL into a card of the roaster's own ad copy.
+
+    Three cards buried a fifteen-line note, and the copy they showed is the
+    marketing text this project deliberately ranks below hard evidence.
+    """
+    sent: list[dict] = []
+
+    class FakeResponse:
+        status = 204
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    def capture(request, timeout=None):
+        import json as _json
+
+        sent.append(_json.loads(request.data.decode()))
+        return FakeResponse()
+
+    monkeypatch.setattr(notify.urllib.request, "urlopen", capture)
+
+    notify.post("https://example.invalid/hook", "a note")
+    assert sent[-1]["flags"] == notify.SUPPRESS_EMBEDS
+
+    notify.post("https://example.invalid/hook", "a note", embeds=True)
+    assert "flags" not in sent[-1], "--embeds opts back in"

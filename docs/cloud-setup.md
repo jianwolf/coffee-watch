@@ -112,6 +112,13 @@ the tree. Put it in the routine prompt, or as a `COFFEE_DISCORD_WEBHOOK`
 environment variable on the cloud environment, remembering that anyone who can
 use that environment can read its variables.
 
+Link previews are suppressed by default (`flags: 4`). Discord otherwise
+unfurls every bare URL into a card carrying the roaster's own marketing copy
+and a product photo, which buries a fifteen-line note under three screens of
+sales text - the copy this project deliberately ranks below hard evidence.
+`--embeds` opts back in. Write links as `[name](url)` so a URL costs part of a
+line rather than a line of its own.
+
 Check the wiring without sending anything:
 
 ```bash

@@ -32,6 +32,11 @@ import urllib.error
 import urllib.request
 
 ENV_VAR = "COFFEE_DISCORD_WEBHOOK"
+# SUPPRESS_EMBEDS (1 << 2). Discord unfurls every bare URL into a preview
+# card carrying the roaster's own marketing copy and a product photo, which
+# buries a fifteen-line note under three screens of someone else's sales
+# text -- the exact copy this project deliberately ranks below evidence.
+SUPPRESS_EMBEDS = 4
 # Discord rejects a message body over 2000 characters outright.
 MAX_CHARS = 2000
 TIMEOUT_S = 20.0
@@ -62,10 +67,18 @@ def split_message(text: str, limit: int = MAX_CHARS) -> list[str]:
     return [chunk for chunk in (c.rstrip() for c in chunks) if chunk]
 
 
-def post(webhook: str, content: str, timeout: float = TIMEOUT_S) -> None:
+def post(
+    webhook: str,
+    content: str,
+    timeout: float = TIMEOUT_S,
+    embeds: bool = False,
+) -> None:
+    payload: dict[str, object] = {"content": content}
+    if not embeds:
+        payload["flags"] = SUPPRESS_EMBEDS
     request = urllib.request.Request(
         webhook,
-        data=json.dumps({"content": content}).encode("utf-8"),
+        data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
             "User-Agent": "coffee-watch-notify/1.0",
@@ -89,6 +102,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--webhook",
         default=os.environ.get(ENV_VAR, ""),
         help=f"Webhook URL (default: ${ENV_VAR}). Never commit this.",
+    )
+    parser.add_argument(
+        "--embeds",
+        action="store_true",
+        help="Let Discord unfurl links into preview cards (off by default).",
     )
     parser.add_argument(
         "--dry-run",
@@ -123,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for index, chunk in enumerate(chunks, 1):
         try:
-            post(args.webhook, chunk)
+            post(args.webhook, chunk, embeds=args.embeds)
         except (urllib.error.URLError, RuntimeError, OSError) as exc:
             # Never echo the URL: it is a credential and logs get shared.
             print(
