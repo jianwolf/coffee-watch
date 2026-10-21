@@ -511,3 +511,44 @@ def test_a_row_with_no_text_at_all_still_reads_as_empty():
 def test_parsed_notes_still_win_when_present():
     product = _product(tasting_notes=["Cherry", "Lychee"], raw_product_text="lots of prose")
     assert brief.build_row(product).notes == "Cherry, Lychee"
+
+
+def test_a_competition_mention_is_flagged_wherever_it_appears():
+    """The one quality claim a seller cannot write for themselves."""
+    for field, text in [
+        ("title", "Las Virginias — 2026 Cup of Excellence Honduras #4"),
+        ("raw_product_text", "took first place at the national competition"),
+        ("raw_product_text", "a Best of Panama winning lot"),
+        ("origin", "Finca X, COE 2025"),
+    ]:
+        assert brief.mentions_competition(_product(**{field: text})), text
+        assert "COMP-MENTION" in brief.product_flags(_product(**{field: text}))
+
+
+def test_an_ordinary_coffee_is_not_flagged():
+    assert not brief.mentions_competition(
+        _product(raw_product_text="a lovely washed Ethiopia, chocolate and citrus")
+    )
+    assert "COMP-MENTION" not in brief.product_flags(_product())
+
+
+def test_the_header_counts_competition_mentions_and_hedges_them():
+    """The flag is a candidate, not a verdict: the phrase may belong elsewhere."""
+    catalog = _catalog([
+        _product(product_url="https://e.com/1", title="2026 Cup of Excellence #4"),
+        _product(product_url="https://e.com/2"),
+    ])
+    header = "\n".join(brief.coverage(catalog))
+    assert "competition mentions: 1 available product(s)" in header
+    assert "confirm with --detail" in header
+
+
+def test_a_sold_out_competition_lot_is_not_counted():
+    catalog = _catalog([
+        _product(
+            product_url="https://e.com/1",
+            title="2026 Cup of Excellence #4",
+            availability="unavailable",
+        )
+    ])
+    assert "competition mentions" not in "\n".join(brief.coverage(catalog))

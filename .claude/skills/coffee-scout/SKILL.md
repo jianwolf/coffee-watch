@@ -205,8 +205,22 @@ Shape it loosely, in this order:
 
 - one short line of state - date, how many roasters returned data, and the
   verdict for the day
-- the one to three things that matter, rarest or most time-sensitive first,
-  each a sentence or two about how it tastes and why it is worth the trouble
+- **every tier-one coffee**, strongest first. Rows carrying `COMP-MENTION` are
+  the candidates: confirm with `--detail` that the placing belongs to *this*
+  lot rather than the farm's history, a neighbouring lot or a subscription
+  blurb, and drop the ones that do not. A third-party placing is the one claim
+  the seller could not have written, so the reader should never have to
+  wonder whether one went unmentioned - there is no cap on this group. Expect
+  roughly 6% of a catalog to mention one and rather fewer to survive the check.
+  Give each a single tight line.
+- **tier two and three only when `is_new`**, and only the ones that stand out
+  even among those. This is a budget, not a quality judgement: recency still
+  says nothing about how good a coffee is, it only decides what is worth
+  raising again today versus what was already on the shelf yesterday. A
+  standing tier-two coffee is not worse for being three weeks old - it simply
+  is not news a second time.
+- each entry gets a sentence or two about how it tastes and why it earns its
+  place
 - a clause for anything close but not urgent, if there is any
 - caveats only where they would change a purchase, as one short line
 
