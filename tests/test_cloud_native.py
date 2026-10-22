@@ -105,6 +105,10 @@ def test_skill_keeps_the_rules_that_prevent_wrong_recommendations():
         "A competition result",  # still evidence
         "seller pays to enter",  # a bought entry is not a producer placing
         "A missing placing often means nothing at all",  # Panama has no CoE
+        # A placing belonging to the estate disqualifies the claim, not the
+        # coffee: Project III sat out three notes on that reading while
+        # carrying three sets of tasting notes.
+        "What that disqualifies is the claim, not the coffee",
         "low price is never evidence against a coffee",  # cheap is not a demerit
         "ROASTER-TOP",  # price read as the seller's own assessment
         # Pinned on single-line fragments: a phrase spanning a wrapped line

@@ -184,11 +184,15 @@ coffee carrying any of these signals, with which ones it has.
 
 - **A competition result**, weighed three ways and not just counted.
   `--competition` prints the phrase and classifies the contest.
-  - *Whose it is.* The placing has to attach to what is in the bag: this lot,
-    this plot, or this producer's recent crop of the variety being sold. The
-    farm's back catalogue, the variety's reputation ("Chiroso has been at the
-    top of Cup of Excellence") and the region's record are provenance worth a
-    clause, not the coffee's own result.
+  - *Whose it is.* Only a placing attached to what is in the bag - this lot,
+    this plot, this producer's recent crop of the variety being sold - may be
+    written as this coffee's result. The farm's back catalogue, the variety's
+    reputation ("Chiroso has been at the top of Cup of Excellence") and the
+    region's record are provenance: real, worth a clause, and **not grounds
+    for leaving the coffee out**. A Geisha from an estate that has won Best
+    of Panama, with notes on its page, is a coffee the reader wants to hear
+    about; write it up and say the placing is the estate's. The only thing
+    forbidden is passing someone else's result off as this bag's.
   - *What rank, in what field.* "Has a placing" flattens a Cup of Excellence
     top three and a mid-table national placing into one claim. A national
     11th is a good coffee, not a top-end one. Say the rank; if the page does
@@ -293,9 +297,11 @@ Shape it loosely, in this order:
   - `--competition` in full, every run. These are the lot-level placings and
     they never rotate out: a Cup of Excellence result that genuinely belongs
     to this lot is the one claim the seller could not have written, and it
-    would be absurd for it to miss a day by chance. Most will not survive -
-    the placing usually belongs to the farm's history, the variety or the
-    region - and that is fine.
+    would be absurd for it to miss a day by chance. Most placings turn out
+    to belong to the farm's history, the variety or the region rather than
+    to this lot. **What that disqualifies is the claim, not the coffee.**
+    Say whose the placing is, and then judge the bag on its flavour and its
+    own provenance like anything else.
   - `python -m coffee_watch.brief --standouts --sample 16` for everything
     else. That is a slice of the signal-carrying shelf, varied by the run
     date so a different part of it comes up each day and the long tail is
@@ -361,9 +367,11 @@ about it:
   earlier year - a 2025 natural Geisha off the same section of a farm that won
   Best of Panama in 2024 is a real thing to know about. Say whose placing it is
   and which lot, in the line. That is provenance, not an apology, and it does
-  not make the entry one of caveats. What does not survive is an entry with no
-  placing of its own, no flavour, and nothing else concrete to say: that one
-  goes in the drop line by name, which is what the drop line is for.
+  not make the entry one of caveats. What keeps a coffee out is having no
+  flavour and nothing else concrete to say - never the fact that the placing
+  on its page belongs to the producer or the estate rather than to this
+  harvest. Proud Mary's Project III was left out of three notes on that
+  ground while carrying three sets of tasting notes.
 - **What makes it unusual** when the page supports it: the variety, a process
   described concretely (hours, stages, temperatures), the producer's record,
   the elevation.
