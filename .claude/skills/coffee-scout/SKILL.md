@@ -125,6 +125,12 @@ The brief's flags are mechanical, not verdicts. What they mean for buying:
 - **`$/100g` only compares within a tier.** A 100 g trophy bag is a different
   product from a 250 g daily bag, not an overpriced version of it. Note how long
   the bags last at roughly two bags a month.
+- **`COMP-MENTION` is a mention, not a result.** The page names a placing
+  somewhere; it may be the farm's back catalogue, the variety's reputation,
+  the region or a subscription blurb. `--competition` extracts the phrase so
+  you can tell which. **`VARIETY:<name>`** is the roaster's own title or
+  variety field naming a prized variety, and `--prized` lists every one of
+  them.
 - **`notes-in-text` means the flavor notes are in the page text**, not the
   parsed field - the field is empty for most products. Use `--detail` for the
   shortlist instead of saying notes were not captured.
