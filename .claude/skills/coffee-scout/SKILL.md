@@ -66,8 +66,9 @@ is committed, namely `purchase-journal.md` - read it first, every run.
 5. **Take the two shortlists from the tool, not from a grep.**
    `--competition` prints every buyable coffee whose page names a placing,
    each with the flagging phrase already extracted in context, so the only
-   thing left is deciding whose placing it is. `--prized` prints the whole
-   prized-variety roster. Use both every run. Do not rebuild either one with
+   thing left is deciding whose placing it is. `--standouts --sample N`
+   prints a date-varied slice of everything carrying any signal. Use both
+   every run; `--prized` narrows to prized varieties when you want that view. Do not rebuild either one with
    `grep ... | cut`: Onyx pages carry seven thousand characters of shop
    navigation, and a grep over them found no placing at all and reported
    coffees as having none, while a `cut -c1-260` on a row listing sheared the
@@ -146,10 +147,11 @@ Write like a friend who follows these roasters, texting about what turned up.
 dump, no restating the brief.
 
 Length follows the news, and there is no floor. One line is a complete reply on
-a quiet day. The ceiling - about twenty lines - governs everything that is
-*not* a tier-one entry; tier one is uncapped and sets its own length, so a day
-with twelve placings is simply a longer note than a day with two. Neither is
-padded. If you are deciding what else to add, you are done.
+a quiet day. The ceiling is not a line count any more but a standard: every
+coffee you name costs two lines of real writing, so the note is as long as
+the number you can write up properly and no longer. If you are deciding what
+else to add, you are done; if you are deciding what to leave half-written,
+leave it out instead.
 
 The question you are answering is **"is there anything here I would regret
 missing?"** - not "what is for sale". Most days the honest answer is no, and
@@ -271,40 +273,39 @@ Shape it loosely, in this order:
 
 - one short line of state - date, how many roasters returned data, and the
   verdict for the day
-- **an entry for every coffee you would regret them missing**, uncapped. The
-  candidates are `--standouts`; pull `--competition` for the phrase behind any
-  `COMP-MENTION`, and `--detail` for every one you write up. There is no cap
-  and no quota: ten is right on a day with ten and one is right on a day with
-  one. What earns an entry is evidence about the coffee, weighed as the
-  section above describes - a placing that is genuinely this lot's, a price
-  far outside its own shop's range, a prized variety or named estate with
-  real provenance behind it. What does not earn one is carrying a signal
-  mechanically: a page that mentions a competition belonging to the farm's
-  history has told you about the farm, not the coffee.
-- **then the roster, pasted from the tool.** Once the entries are written,
-  run `python -m coffee_watch.brief --roster` with the note so far on stdin.
-  It prints one line per roaster covering every remaining coffee that carries
-  a signal, already tidied, priced and linked, and it leaves out anything you
-  have already linked. **Paste those lines verbatim.** Every coffee on it is
-  a masked link, so the line reads the same length and still taps through,
-  and a roaster with too many coffees for one line is already split across
-  several - Discord hard-splits an over-long line and would cut a link in
-  half. Do not retype them, drop
-  roasters, or shorten the list to taste: asked to transcribe fifty-six rows
-  by hand, a run produced twenty-nine, lost George Howell completely and
-  dropped the Dayglow Sudan Rume - the exact coffee the roster exists to
-  surface - and then closed by saying they were all in the roster. Thirteen
-  lines of generated text cost nothing and cannot do that. The roster sits
-  outside the length budget.
-
-  Nothing with a signal is ever dropped: a coffee is either an entry or on the
-  roster. That replaces the old practice of reporting a count of exclusions,
-  which read as "gone" when the coffee was still buyable.
-- **one line of arithmetic, so the reader can audit you.** How many carried
-  each signal, how many became entries, and in one clause why the rest did
-  not - `带信号 64 支,入选 5,其余在名册里`. Only claim the rest are on the
-  roster after `--verify-note` has passed; that sentence was false once
-  already, and a reader who counts the roster will catch it.
+- **a written-up entry for every coffee you name, and nothing else.** No bare
+  lists. A name and a link with no flavour and no reason is not a mention
+  that helps anyone - it reads as a recommendation with nothing behind it,
+  and the reader has to open a tab to find out whether they care. **Fewer
+  coffees, each actually written up, beats a complete list of names.** If you
+  cannot say what a coffee tastes like and why it is here, it does not go in
+  the note at all.
+- **Where the candidates come from**, in two passes:
+  - `--competition` in full, every run. These are the lot-level placings and
+    they never rotate out: a Cup of Excellence result that genuinely belongs
+    to this lot is the one claim the seller could not have written, and it
+    would be absurd for it to miss a day by chance. Most will not survive -
+    the placing usually belongs to the farm's history, the variety or the
+    region - and that is fine.
+  - `python -m coffee_watch.brief --standouts --sample 12` for everything
+    else. That is a slice of the signal-carrying shelf, varied by the run
+    date so a different part of it comes up each day and the long tail is
+    not invisible forever. It is **not** a ranking and the coffees left out
+    are not worse; a cloud run has no memory of yesterday, so the date is the
+    only rotation available. Raise or lower the number to what you can write
+    up properly - around a dozen is what fits once each one needs a
+    `--detail` read.
+- **Then read `--detail` for each candidate and drop the ones you cannot
+  write up.** This is where most of them go. A page with no flavour and no
+  concrete provenance gives you nothing to say, so say nothing about it.
+  Landing on five entries out of twenty candidates is a good day's work, not
+  a truncated answer.
+- **one line of arithmetic, so the reader can audit you.** How many coffees
+  carried a signal, how many you wrote up, and plainly that the rest were not
+  covered - `带信号 61 支,今天写了 9 支,其余没覆盖(每天抽的那批不同)`. Never
+  imply the rest are listed somewhere below, and never report a count of
+  exclusions as though the coffees were gone: they are on the shelf, they
+  just did not get written about today.
 
 **Every entry has to earn its place in its own words.** One or two lines, and
 they must say why this coffee is worth your attention - not what is missing
@@ -355,19 +356,17 @@ they belong to, never as the whole line.
 Every pick needs its roaster, its size, its price and its link somewhere, but
 write them the way you would type them to a person - "Dayglow,100g $64,是他们
 自家中位价的 4.7 倍" - not as a field list. Three picks carrying the same
-five labelled fields is a table with the markdown filed off. A long tier-one
-day is unavoidably a list; what keeps it from being a table is that each line
-says something specific to that coffee rather than filling the same slots.
+five labelled fields is a table with the markdown filed off. What keeps a
+longer day from being a table is that each entry says something specific to
+that coffee rather than filling the same slots.
 Reach for `$/100g` only when it makes a point, and remember it only compares
 within a size tier.
 
 **Check the note before you deliver.** Pipe the finished note through
-`python -m coffee_watch.brief --verify-note`. It exits non-zero and reports
-two things: a URL that is not a product in this catalog, including one that
-is merely a prefix of a real URL, and a roster line the note is missing. Both
-have shipped - a `cut -c1-260` sheared `al` off a product URL, and half the
-roster went unpasted under a sentence claiming it was complete. Fix what it
-reports and re-check until it is clean.
+`python -m coffee_watch.brief --verify-note`. It exits non-zero and names any
+URL that is not a product in this catalog, including one that is merely a
+prefix of a real URL - a `cut -c1-260` once sheared `al` off a product URL
+and shipped a dead link. Fix what it reports and re-check until it is clean.
 
 Hold to these:
 

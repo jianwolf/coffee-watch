@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import re
 import statistics
 import sys
@@ -780,17 +781,14 @@ LINK_RE = re.compile(r"\((https?://[^)\s]+)\)")
 
 
 def verify_note(catalog: dict[str, Any], note: str) -> list[str]:
-    """Everything mechanically checkable about a finished note."""
-    problems = verify_links(catalog, note)
-    for line in render_roster(catalog, note).splitlines():
-        roaster, _, _ = line.partition(":")
-        if line in note:
-            continue
-        problems.append(
-            f"ROSTER LINE MISSING ({roaster}): the note must carry this "
-            f"verbatim --\n            {line}"
-        )
-    return problems
+    """Everything mechanically checkable about a finished note.
+
+    Only the links. The roster this also used to check is gone: a line of
+    bare names and URLs reads as a recommendation with nothing behind it,
+    and the user would rather see fewer coffees with a flavour and a reason
+    than a complete list of names.
+    """
+    return verify_links(catalog, note)
 
 
 def verify_links(catalog: dict[str, Any], note: str) -> list[str]:
@@ -821,7 +819,7 @@ def verify_links(catalog: dict[str, Any], note: str) -> list[str]:
 def render_prized(catalog: dict[str, Any]) -> str:
     """Every buyable coffee whose own fields name a prized variety.
 
-    A roster rather than a shortlist: uncapped, one line each, grouped by
+    A complete listing rather than a shortlist: uncapped, one line each,
     roaster, and deliberately without tasting notes - the point is that
     nothing rare goes unmentioned, not that each one gets an argument.
     """
@@ -837,7 +835,7 @@ def render_prized(catalog: dict[str, Any]) -> str:
         "# coffee-watch prized varieties",
         f"run: {catalog.get('run_id') or '(unknown)'}",
         f"{len(products)} buyable product(s) whose own title or variety field names "
-        "a prized variety. The whole roster, uncapped; sold-out and page-blocked "
+        "a prized variety. All of them; sold-out and page-blocked "
         "products are already excluded. No tasting notes here - use --detail for "
         "any you decide to write up.",
     ]
@@ -869,6 +867,30 @@ def render_prized(catalog: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def sample_by_run(
+    products: list[dict[str, Any]], count: int, run_id: str
+) -> list[dict[str, Any]]:
+    """A stable, varied slice of `products`, different on each run date.
+
+    A cloud run has no memory of yesterday - reports/ is gitignored and
+    purchase-journal.md must not be written by a scheduled run - so there is
+    nowhere to record which coffees were written up last time. Seeding on the
+    run id instead gives a different slice every day without storing
+    anything, and the same slice twice within one day, which keeps a rerun
+    reproducible.
+
+    Ordering is by product_url first so the shuffle does not inherit catalog
+    order, which groups by roaster and would otherwise bias a small sample
+    toward whoever was scraped first.
+    """
+    if count <= 0 or count >= len(products):
+        return list(products)
+    ordered = sorted(products, key=lambda p: str(p.get("product_url") or ""))
+    rng = random.Random(f"coffee-watch:{run_id}")
+    rng.shuffle(ordered)
+    return ordered[:count]
+
+
 def signal_products(
     catalog: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, float]]:
@@ -891,10 +913,10 @@ def signal_products(
     return carrying, medians
 
 
-def _roster_title(product: dict[str, Any]) -> str:
+def _display_title(product: dict[str, Any]) -> str:
     """A roaster's title with its own shelf boilerplate taken off.
 
-    Deterministic, because the roster is compared against the note verbatim:
+    Deterministic, so a title reads the same every run:
     "LIMITED | PANAMA | Elida Estate - Falda | Geisha | Natural" becomes
     "PANAMA Elida Estate - Falda Geisha Natural". Tidying is done here rather
     than left to whoever writes the note, since a hand-tidied line no longer
@@ -917,75 +939,7 @@ def _compact_price(product: dict[str, Any]) -> str:
     return f"{size.strip()} {price.strip().rstrip('0').rstrip('.')}"
 
 
-# A roster line is never allowed to reach Discord's 2000-character message
-# limit, because the poster hard-splits an over-long line and would cut a
-# markdown link in half, spilling a raw URL into the note. A roaster with
-# many coffees gets several lines instead, each carrying its name.
-ROSTER_LINE_LIMIT = 1500
-
-
-def _roster_entry(product: dict[str, Any]) -> str:
-    """One coffee as a masked link, or bare text when it has no URL."""
-    label = f"{_roster_title(product)} {_compact_price(product)}"
-    url = str(product.get("product_url") or "").strip()
-    return f"[{label}]({url})" if url else label
-
-
-def _roster_lines(roaster: str, entries: list[str]) -> list[str]:
-    """One line per roaster, split further when a line would run too long."""
-    lines: list[str] = []
-    current: list[str] = []
-    for entry in entries:
-        candidate = [*current, entry]
-        width = len(roaster) + 1 + len(" | ".join(candidate))
-        if current and width > ROSTER_LINE_LIMIT:
-            lines.append(f"{roaster}:{' | '.join(current)}")
-            current = [entry]
-        else:
-            current = candidate
-    if current:
-        lines.append(f"{roaster}:{' | '.join(current)}")
-    return lines
-
-
-def render_roster(catalog: dict[str, Any], note: str = "") -> str:
-    """The roster, already written out, grouped by roaster.
-
-    Generated rather than transcribed. Asked to copy fifty-six rows by hand
-    into a note, a run produced twenty-nine, dropped George Howell entirely
-    and lost the Sudan Rume that the roster exists to surface - then closed
-    with "都在名册里". Anything already linked in `note` is treated as having
-    its own entry and left out.
-
-    Each coffee is a markdown link, which costs a reader nothing: a masked
-    link renders as its name, so the line looks the same and taps through.
-    """
-    carrying, _ = signal_products(catalog)
-    linked = set(LINK_RE.findall(note))
-    remaining = [
-        product
-        for product in carrying
-        if str(product.get("product_url") or "").strip() not in linked
-    ]
-    by_roaster: dict[str, list[dict[str, Any]]] = {}
-    for product in remaining:
-        by_roaster.setdefault(str(product.get("roaster") or ""), []).append(product)
-    lines = []
-    for roaster in sorted(by_roaster):
-        items = sorted(
-            by_roaster[roaster], key=lambda p: str(p.get("title") or "")
-        )
-        # ASCII separator: this module carries no non-ASCII text, and
-        # _roster_title has already stripped the pipes out of the titles.
-        rendered = [
-            _roster_entry(item)
-            for item in items
-        ]
-        lines.extend(_roster_lines(roaster, rendered))
-    return "\n".join(lines) + ("\n" if lines else "")
-
-
-def render_standouts(catalog: dict[str, Any]) -> str:
+def render_standouts(catalog: dict[str, Any], sample: int = 0) -> str:
     """Every buyable coffee carrying any quality signal, with which ones.
 
     One list instead of three, because the signals are not a hierarchy. A
@@ -1017,6 +971,16 @@ def render_standouts(catalog: dict[str, Any]) -> str:
         if signals:
             rows.append((price_standout(product, medians.get(roaster)), row, product))
 
+    total = len(rows)
+    sampled = sample_by_run(
+        [product for _, _, product in rows],
+        sample,
+        str(catalog.get("run_id") or ""),
+    )
+    if sample and len(sampled) < len(rows):
+        keep = {id(product) for product in sampled}
+        rows = [entry for entry in rows if id(entry[2]) in keep]
+
     price_only = [
         row
         for ratio, row, _ in rows
@@ -1027,6 +991,8 @@ def render_standouts(catalog: dict[str, Any]) -> str:
     lines = [
         "# coffee-watch standouts",
         f"run: {catalog.get('run_id') or '(unknown)'}",
+        f"{len(rows)} shown of {total} buyable product(s) carrying at least one "
+        "signal. " if sample and len(rows) < total else
         f"{len(rows)} buyable product(s) carrying at least one signal. "
         "COMP-MENTION: the page names a placing somewhere (--competition "
         "prints the phrase and what kind of contest it was). VARIETY: the "
@@ -1037,6 +1003,15 @@ def render_standouts(catalog: dict[str, Any]) -> str:
         "evidence against a coffee.",
         f"{len(price_only)} of them carry ONLY the price signal, so neither a "
         "placing nor a prized variety would have surfaced them.",
+    ]
+    if sample and len(rows) < total:
+        lines.append(
+            f"This is a {len(rows)}-of-{total} slice, varied by run date so a "
+            "different part of the shelf comes up each day. It is not a "
+            "ranking, and the ones left out are not worse - say in the note "
+            "how many were not covered."
+        )
+    lines += [
     ]
     by_roaster: dict[str, list[tuple[float, Row]]] = {}
     for ratio, row, _ in rows:
@@ -1260,14 +1235,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="List every buyable product carrying any quality signal, with which",
     )
     parser.add_argument(
+        "--sample",
+        type=int,
+        default=0,
+        help="With --standouts: show this many, varied by run date (0 = all)",
+    )
+    parser.add_argument(
         "--competition",
         action="store_true",
         help="List competition candidates with the flagging phrase in context",
-    )
-    parser.add_argument(
-        "--roster",
-        action="store_true",
-        help="Print the roster lines to paste; reads the note so far on stdin",
     )
     parser.add_argument(
         "--verify-note",
@@ -1309,22 +1285,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.standouts:
-        sys.stdout.write(render_standouts(catalog))
+        sys.stdout.write(render_standouts(catalog, sample=args.sample))
         return 0
 
     if args.competition:
         sys.stdout.write(render_competition(catalog))
         return 0
 
-    if args.roster:
-        note = "" if sys.stdin.isatty() else sys.stdin.read()
-        sys.stdout.write(render_roster(catalog, note))
-        return 0
-
     if args.verify_note:
         problems = verify_note(catalog, sys.stdin.read())
         if not problems:
-            print("Links resolve and every roster line is present.")
+            print("Every link in the note resolves to a catalog product.")
             return 0
         print(f"{len(problems)} problem(s):", file=sys.stderr)
         for problem in problems:

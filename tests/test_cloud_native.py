@@ -107,9 +107,12 @@ def test_skill_keeps_the_rules_that_prevent_wrong_recommendations():
         "A missing placing often means nothing at all",  # Panama has no CoE
         "low price is never evidence against a coffee",  # cheap is not a demerit
         "ROASTER-TOP",  # price read as the seller's own assessment
-        "regret them missing",  # the question the note answers
-        "Nothing with a signal is ever dropped",  # no silent exclusions
-        "Paste those lines verbatim",  # a hand-copied roster lost half its rows
+        # Pinned on single-line fragments: a phrase spanning a wrapped line
+        # breaks whenever the paragraph is rewrapped, which says nothing.
+        "is there anything here I would regret",  # the question the note answers
+        "a written-up entry for every coffee you name",  # no bare lists
+        "each actually written up",  # fewer, properly, beats a list of names
+        "they never rotate out",  # a real placing cannot miss a day by chance
         "--verify-note",  # the note is checked before it is delivered
         "one line of arithmetic",  # completeness must be auditable
         "is_new` does not mean today",  # a 5-day-old listing called 今天新上

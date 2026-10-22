@@ -828,80 +828,16 @@ def test_standouts_counts_what_only_the_price_signal_found():
     assert "median $4.00/100g" in out
 
 
-def test_the_roster_is_generated_whole_rather_than_transcribed():
-    """Asked to copy 56 rows by hand, a run wrote 29 and said "都在名册里".
-
-    It dropped George Howell entirely and lost the Sudan Rume the roster
-    exists to surface, so the roster is emitted as text to paste.
-    """
-    catalog = _catalog([
-        _priced("Dayglow", "https://d.com/1", 55.0, 250, title="Sudan Rume"),
-        _priced("Dayglow", "https://d.com/2", 68.0, 120, title="Takesi Gesha"),
-        _product(
-            roaster="George Howell",
-            product_url="https://g.com/1",
-            title="Mamuto AA, Kenya",
-            price="45.00",
-            price_variant="8 oz / Whole Bean",
-            price_label="8 oz / Whole Bean = $45.00",
-            raw_product_text="placed 3rd in the 2025 Cup of Excellence",
-            variants=[{"title": "8 oz / Whole Bean", "price": "45.00",
-                       "grams": 227, "available": True}],
-        ),
-        _priced("Dayglow", "https://d.com/3", 12.0, 250, title="House Blend"),
-    ])
-    roster = brief.render_roster(catalog)
-    assert "Sudan Rume 250 g $55" in roster
-    assert "Takesi Gesha 120 g $68" in roster
-    # George Howell's single signal coffee gets its own line, not an omission.
-    assert "George Howell:[Mamuto AA, Kenya 8 oz $45](https://g.com/1)" in roster
-    assert "House Blend" not in roster
-    assert len(roster.strip().splitlines()) == 2
-
-
-def test_a_coffee_with_its_own_entry_leaves_the_roster():
-    catalog = _catalog([
-        _priced("Dayglow", "https://d.com/1", 55.0, 250, title="Sudan Rume"),
-        _priced("Dayglow", "https://d.com/2", 68.0, 120, title="Takesi Gesha"),
-    ])
-    note = "**[Dayglow Sudan Rume](https://d.com/1)** 250g $55\nvery rare"
-    roster = brief.render_roster(catalog, note)
-    assert "Sudan Rume" not in roster
-    assert "Takesi Gesha" in roster
-
-
-def test_roster_titles_lose_the_shelf_boilerplate():
+def test_display_titles_lose_the_shelf_boilerplate():
     product = _product(title="LIMITED | PANAMA | Elida Estate - Falda | Geisha | Natural")
-    assert brief._roster_title(product) == "PANAMA Elida Estate - Falda Geisha Natural"
-    assert brief._roster_title(_product(title="Sudan Rume")) == "Sudan Rume"
+    assert brief._display_title(product) == "PANAMA Elida Estate - Falda Geisha Natural"
+    assert brief._display_title(_product(title="Sudan Rume")) == "Sudan Rume"
 
 
 def test_a_grind_choice_is_not_a_size():
     product = _product(price_label="12 oz / Whole Bean = $25.00")
     assert brief._compact_price(product) == "12 oz $25"
     assert brief._compact_price(_product(price_label="250 g = $24.50")) == "250 g $24.5"
-
-
-def test_verify_note_catches_a_roster_line_the_note_dropped():
-    catalog = _catalog([
-        _priced("Dayglow", "https://d.com/1", 55.0, 250, title="Sudan Rume"),
-        _priced("George Howell", "https://g.com/1", 65.0, 113,
-                title="Llaqta Pata Gesha"),
-    ])
-    short = (
-        "名册:\nDayglow:[Sudan Rume 250 g $55](https://d.com/1)\n"
-        "算一下:带信号 2 支,都在名册里。"
-    )
-    problems = brief.verify_note(catalog, short)
-    assert len(problems) == 1
-    assert "ROSTER LINE MISSING (George Howell)" in problems[0]
-    assert "Llaqta Pata Gesha" in problems[0]
-
-    complete = short.replace(
-        "算一下",
-        "George Howell:[Llaqta Pata Gesha 113 g $65](https://g.com/1)\n算一下",
-    )
-    assert brief.verify_note(catalog, complete) == []
 
 
 def test_a_one_product_roaster_can_never_be_its_own_price_standout():
@@ -914,50 +850,77 @@ def test_a_one_product_roaster_can_never_be_its_own_price_standout():
     medians = brief.roaster_median_per_100g([only])
     assert brief.price_standout(only, medians["Tiny"]) == 0.0
 
+def test_the_sample_rotates_by_run_date_with_nothing_stored():
+    """A cloud run cannot remember yesterday, so the date is the memory.
 
-def test_every_roster_coffee_carries_its_link():
-    """A masked link renders as its name, so the line reads the same."""
-    catalog = _catalog([
-        _priced("Dayglow", "https://d.com/takesi", 68.0, 120, title="Takesi Gesha"),
-    ])
-    line = brief.render_roster(catalog).strip()
-    assert line == "Dayglow:[Takesi Gesha 120 g $68](https://d.com/takesi)"
-
-
-def test_a_coffee_with_no_url_still_appears_unlinked():
-    catalog = _catalog([
-        _priced("Dayglow", "https://d.com/1", 68.0, 120, title="Takesi Gesha"),
-    ])
-    catalog["products"][0]["product_url"] = ""
-    assert brief.render_roster(catalog).strip() == "Dayglow:Takesi Gesha 120 g $68"
-
-
-def test_a_long_roaster_is_split_before_discord_can_cut_a_link():
-    """The poster hard-splits a line over 2000 chars, which would halve a URL.
-
-    Splitting here keeps every line whole and every link intact.
+    reports/ is gitignored and a scheduled run must not write the journal,
+    so there is nowhere to record what was written up last time.
     """
     products = [
-        _priced("Big Shop", f"https://b.com/{'x' * 60}/{i}", 60.0, 100,
-                title=f"Gesha Lot {i} {'long name ' * 5}")
+        _priced("Shop", f"https://s.com/{i}", 20.0, 250, title=f"Coffee {i}")
         for i in range(40)
     ]
-    products += [_priced("Big Shop", f"https://b.com/cheap{i}", 5.0, 250)
-                 for i in range(40)]
-    lines = brief.render_roster(_catalog(products)).strip().splitlines()
-    assert len(lines) > 1, "this fixture must exceed one line"
-    for line in lines:
-        assert line.startswith("Big Shop:")
-        assert len(line) <= brief.ROSTER_LINE_LIMIT
-        assert line.count("[") == line.count("]") == line.count("](")
-    # Splitting must not lose anyone.
-    assert sum(line.count("](") for line in lines) == 40
+    monday = {p["product_url"] for p in brief.sample_by_run(products, 10, "20261022")}
+    tuesday = {p["product_url"] for p in brief.sample_by_run(products, 10, "20261023")}
+    assert len(monday) == len(tuesday) == 10
+    assert monday != tuesday, "a new day must bring a different slice"
+    # Reproducible within one day, so a rerun says the same thing.
+    again = {p["product_url"] for p in brief.sample_by_run(products, 10, "20261022")}
+    assert again == monday
 
 
-def test_verify_note_still_matches_the_linked_lines():
+def test_sampling_is_a_no_op_when_it_would_not_narrow_anything():
+    products = [
+        _priced("Shop", f"https://s.com/{i}", 20.0, 250) for i in range(5)
+    ]
+    assert len(brief.sample_by_run(products, 0, "20261022")) == 5
+    assert len(brief.sample_by_run(products, 5, "20261022")) == 5
+    assert len(brief.sample_by_run(products, 99, "20261022")) == 5
+
+
+def test_the_sample_does_not_inherit_catalog_order():
+    """The catalog groups by roaster, so an unshuffled slice is one shop."""
+    products = [
+        _priced("First Shop", f"https://a.com/{i}", 20.0, 250) for i in range(20)
+    ] + [
+        _priced("Second Shop", f"https://b.com/{i}", 20.0, 250) for i in range(20)
+    ]
+    picked = brief.sample_by_run(products, 10, "20261022")
+    roasters = {p["roaster"] for p in picked}
+    assert roasters == {"First Shop", "Second Shop"}
+
+
+def test_a_sampled_listing_still_reports_the_true_total():
+    """The note's arithmetic has to be the shelf's, not the slice's."""
+    products = [
+        _priced("Shop", f"https://s.com/{i}", 20.0, 250, title=f"Gesha {i}")
+        for i in range(30)
+    ]
+    out = brief.render_standouts(_catalog(products), sample=8)
+    assert "8 shown of 30 buyable product(s)" in out
+    assert "8-of-30 slice" in out
+    assert "not a ranking" in out
+    assert out.count("\n- ") == 8
+
+
+def test_an_unsampled_listing_says_nothing_about_slices():
+    products = [
+        _priced("Shop", f"https://s.com/{i}", 20.0, 250, title=f"Gesha {i}")
+        for i in range(5)
+    ]
+    out = brief.render_standouts(_catalog(products))
+    assert "5 buyable product(s) carrying at least one signal" in out
+    assert "slice" not in out
+
+
+def test_verify_note_checks_links_and_no_longer_demands_a_roster():
+    """Bare names and links were the thing being removed, not enforced."""
+    url = "https://e.com/products/x"
     catalog = _catalog([
-        _priced("Dayglow", "https://d.com/takesi", 68.0, 120, title="Takesi Gesha"),
+        _product(product_url=url, title="Takesi Gesha"),
+        _priced("Other", "https://o.com/1", 60.0, 100, title="Sudan Rume"),
     ])
-    roster = brief.render_roster(catalog)
-    assert brief.verify_note(catalog, f"note\n{roster}") == []
-    assert brief.verify_note(catalog, "note\nDayglow:Takesi Gesha 120 g $68")
+    assert brief.verify_note(catalog, f"only one writeup: [x]({url}), 风味…") == []
+    assert brief.verify_note(catalog, "[y](https://nope.test/a)") == [
+        "NOT IN CATALOG: https://nope.test/a"
+    ]
