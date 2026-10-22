@@ -954,3 +954,45 @@ def test_page_text_merge_respects_the_cap_and_single_sources():
     # A JSON-LD description already at the cap leaves no room, and must not
     # overflow it to append anything.
     assert len(merge_page_text("a" * 200, "b" * 50, 150)) == 150
+
+
+def test_quotable_flavour_counts_a_real_label_not_shop_education():
+    """Onyx repeats "tasting notes aren't meant to prescribe flavors".
+
+    It sits about twenty thousand characters into every one of its pages, so
+    a bare substring match called 28 Onyx products flavoured when none of
+    those matches was a flavour.
+    """
+    assert brief.has_quotable_flavour(_product(tasting_notes=["Cherry"]))
+    assert brief.has_quotable_flavour(
+        _product(tasting_notes=[], raw_product_text="Tasting Notes: Floral, peach")
+    )
+    assert not brief.has_quotable_flavour(
+        _product(
+            tasting_notes=[],
+            raw_product_text=(
+                "The assigned tasting notes aren't meant to prescribe flavors "
+                "but instead offer an explanation of how that coffee's origin"
+            ),
+        )
+    )
+    assert not brief.has_quotable_flavour(_product(tasting_notes=[], raw_product_text=""))
+
+
+def test_standouts_says_how_many_entries_the_shelf_could_carry():
+    """A four-entry note on a shelf of forty-four is a choice, not a limit."""
+    catalog = _catalog([
+        _priced("Shop", "https://s.com/1", 60.0, 100, title="Gesha One",
+                tasting_notes=["Jasmine"]),
+        _priced("Shop", "https://s.com/2", 60.0, 100, title="Gesha Two",
+                tasting_notes=[], raw_product_text="Tasting Notes: Peach, plum"),
+        _priced("Shop", "https://s.com/3", 60.0, 100, title="Gesha Three",
+                tasting_notes=[], raw_product_text="no cup description here"),
+        _priced("Shop", "https://s.com/4", 10.0, 250, title="House Blend"),
+    ])
+    out = brief.render_standouts(catalog)
+    assert "3 buyable product(s) carrying at least one signal" in out
+    assert "2 of them have a flavour to quote" in out
+    assert "Writing far fewer" in out
+    # The count is a floor, and the header has to say so.
+    assert "A floor, not a count" in out

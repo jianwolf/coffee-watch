@@ -54,6 +54,7 @@
 - `python scrape_coffee.py --run-deadline-s 600` - bound the whole scrape; roasters still in flight are cancelled and everything already collected is kept. Use it for any unattended run.
 - `python -m coffee_watch.brief` - render the newest catalog as the compact brief the skill reads (`--new-only`, `--available-only`, `--roaster NAME`, `--standouts`, `--competition`,
   `--prized`, `--sample N`, `--verify-note`, `--detail <title|url|id>`).
+- `python -m coffee_watch.brief --standouts --sample 16` - the daily candidate slice, varied by run date; its header reports how many of those coffees have a flavour to quote, which is the number a short note has to justify itself against.
 - `python -m coffee_watch.hosts` - print the egress allowlist a cloud environment needs.
 - `pytest -q` - run the test suite.
 - `python -m py_compile scrape_coffee.py main.py coffee_watch/*.py tests/*.py` - quick syntax sanity check.

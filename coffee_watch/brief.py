@@ -891,6 +891,37 @@ def sample_by_run(
     return ordered[:count]
 
 
+# A page's own "Tasting Notes:" label, as opposed to the phrase appearing in
+# a shop's educational copy. Onyx repeats "tasting notes aren't meant to
+# prescribe flavors" about twenty thousand characters into every one of its
+# pages, and an earlier version of this pattern anchored on "any following
+# letter", which that sentence satisfies - it counted 28 Onyx products as
+# flavoured when none of the matches was a flavour. Two things separate a
+# real label: the next word is not prose, and a list follows.
+FLAVOUR_PROSE_AFTER = (
+    r"aren|are|is|isn|was|were|will|would|should|can|may|might|do|don|does|"
+    r"mean|meant|offer|help|describe|tell|give|serve|allow|exist"
+)
+FLAVOUR_LABEL_RE = re.compile(
+    rf"(?i)tasting notes\s*[:\-]?\s*(?!(?:{FLAVOUR_PROSE_AFTER})\b)[a-z][^.!?]{{0,80}},"
+)
+
+
+def has_quotable_flavour(product: dict[str, Any]) -> bool:
+    """Whether there is a flavour on this product to quote.
+
+    Deliberately weaker than extracting it: this says something is there to
+    read, not what it says. Two attempts at extraction measured well only on
+    the pages that needed no help, so the reading stays the agent's job -
+    but whether a page has anything at all is mechanical, and it is the
+    number that says how long a note could honestly be.
+    """
+    if product.get("tasting_notes"):
+        return True
+    text = re.sub(r"\s+", " ", str(product.get("raw_product_text") or ""))
+    return bool(FLAVOUR_LABEL_RE.search(text))
+
+
 def signal_products(
     catalog: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, float]]:
@@ -1003,6 +1034,11 @@ def render_standouts(catalog: dict[str, Any], sample: int = 0) -> str:
         "evidence against a coffee.",
         f"{len(price_only)} of them carry ONLY the price signal, so neither a "
         "placing nor a prized variety would have surfaced them.",
+        f"{sum(1 for _, _, product in rows if has_quotable_flavour(product))} of "
+        "them have a flavour to quote (a parsed tasting_notes field, or the "
+        "page's own Tasting Notes label). A floor, not a count: a shop that "
+        "writes its notes without a label is missed. Writing far fewer "
+        "entries than this is a choice, so say so in the note.",
     ]
     if sample and len(rows) < total:
         lines.append(

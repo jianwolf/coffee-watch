@@ -111,7 +111,8 @@ def test_skill_keeps_the_rules_that_prevent_wrong_recommendations():
         # breaks whenever the paragraph is rewrapped, which says nothing.
         "is there anything here I would regret",  # the question the note answers
         "a written-up entry for every coffee you name",  # no bare lists
-        "each actually written up",  # fewer, properly, beats a list of names
+        "Aim for about ten entries",  # over-correction pinned three runs at 4
+        "有风味可引",  # the count that makes a short note auditable
         "they never rotate out",  # a real placing cannot miss a day by chance
         "--verify-note",  # the note is checked before it is delivered
         "one line of arithmetic",  # completeness must be auditable

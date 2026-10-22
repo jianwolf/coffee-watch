@@ -276,10 +276,19 @@ Shape it loosely, in this order:
 - **a written-up entry for every coffee you name, and nothing else.** No bare
   lists. A name and a link with no flavour and no reason is not a mention
   that helps anyone - it reads as a recommendation with nothing behind it,
-  and the reader has to open a tab to find out whether they care. **Fewer
-  coffees, each actually written up, beats a complete list of names.** If you
+  and the reader has to open a tab to find out whether they care. If you
   cannot say what a coffee tastes like and why it is here, it does not go in
   the note at all.
+- **Aim for about ten entries.** Not a cap, and not a quota to pad toward:
+  the `--standouts` header says how many coffees have a flavour to quote,
+  and on a measured day that was thirty-three of sixty-six. It counts a
+  page's own Tasting Notes label, so it undercounts - Onyx writes its notes
+  with no label at all - and even so it is far more than a note has been
+  carrying. Write fewer when fewer qualify, and then say in the arithmetic
+  line how many could have been written. Earlier wording here ("two entries
+  is a good day's work") held three runs in a row at four entries whatever
+  was on the shelf; that was over-correction from a day when the flavour
+  data was broken, and it is not the standard.
 - **Where the candidates come from**, in two passes:
   - `--competition` in full, every run. These are the lot-level placings and
     they never rotate out: a Cup of Excellence result that genuinely belongs
@@ -287,7 +296,7 @@ Shape it loosely, in this order:
     would be absurd for it to miss a day by chance. Most will not survive -
     the placing usually belongs to the farm's history, the variety or the
     region - and that is fine.
-  - `python -m coffee_watch.brief --standouts --sample 12` for everything
+  - `python -m coffee_watch.brief --standouts --sample 16` for everything
     else. That is a slice of the signal-carrying shelf, varied by the run
     date so a different part of it comes up each day and the long tail is
     not invisible forever. It is **not** a ranking and the coffees left out
@@ -298,11 +307,15 @@ Shape it loosely, in this order:
 - **Then read `--detail` for each candidate and drop the ones you cannot
   write up.** This is where most of them go. A page with no flavour and no
   concrete provenance gives you nothing to say, so say nothing about it.
-  Landing on five entries out of twenty candidates is a good day's work, not
-  a truncated answer.
+  This is a real filter, but check the count before trusting it: when the
+  header says thirty-odd coffees have a flavour to quote and you have
+  written four, the filter is not what happened.
 - **one line of arithmetic, so the reader can audit you.** How many coffees
   carried a signal, how many you wrote up, and plainly that the rest were not
-  covered - `带信号 61 支,今天写了 9 支,其余没覆盖(每天抽的那批不同)`. Never
+  covered, **including how many had a flavour to quote** -
+  `带信号 66 支、其中 33 支有风味可引,今天写了 9 支`. That second number is
+  what makes a short note auditable: without it "wrote 4" reads as all
+  there was to write. Never
   imply the rest are listed somewhere below, and never report a count of
   exclusions as though the coffees were gone: they are on the shelf, they
   just did not get written about today.
@@ -359,7 +372,8 @@ An entry that is only caveats is a failure, and so is an entry whose flavour
 line is an absence. If, after reading the whole detail output, you cannot say
 how a coffee tastes and why it belongs, it does not belong in the note - leave
 it out instead of listing it with an apology. Landing on two entries is a
-good day's work when only two pages told you anything.
+an honest answer only when the header agrees that few pages told you
+anything - check it rather than assuming.
 Caveats (unverified size, API weight, aged stock) ride at the end of the line
 they belong to, never as the whole line.
 
