@@ -826,3 +826,86 @@ def test_standouts_counts_what_only_the_price_signal_found():
     assert "Takesi Peaberry" in out
     assert "1 of them carry ONLY the price signal" in out
     assert "median $4.00/100g" in out
+
+
+def test_the_roster_is_generated_whole_rather_than_transcribed():
+    """Asked to copy 56 rows by hand, a run wrote 29 and said "都在名册里".
+
+    It dropped George Howell entirely and lost the Sudan Rume the roster
+    exists to surface, so the roster is emitted as text to paste.
+    """
+    catalog = _catalog([
+        _priced("Dayglow", "https://d.com/1", 55.0, 250, title="Sudan Rume"),
+        _priced("Dayglow", "https://d.com/2", 68.0, 120, title="Takesi Gesha"),
+        _product(
+            roaster="George Howell",
+            product_url="https://g.com/1",
+            title="Mamuto AA, Kenya",
+            price="45.00",
+            price_variant="8 oz / Whole Bean",
+            price_label="8 oz / Whole Bean = $45.00",
+            raw_product_text="placed 3rd in the 2025 Cup of Excellence",
+            variants=[{"title": "8 oz / Whole Bean", "price": "45.00",
+                       "grams": 227, "available": True}],
+        ),
+        _priced("Dayglow", "https://d.com/3", 12.0, 250, title="House Blend"),
+    ])
+    roster = brief.render_roster(catalog)
+    assert "Sudan Rume 250 g $55" in roster
+    assert "Takesi Gesha 120 g $68" in roster
+    # George Howell's single signal coffee gets its own line, not an omission.
+    assert "George Howell:Mamuto AA, Kenya 8 oz $45" in roster
+    assert "House Blend" not in roster
+    assert len(roster.strip().splitlines()) == 2
+
+
+def test_a_coffee_with_its_own_entry_leaves_the_roster():
+    catalog = _catalog([
+        _priced("Dayglow", "https://d.com/1", 55.0, 250, title="Sudan Rume"),
+        _priced("Dayglow", "https://d.com/2", 68.0, 120, title="Takesi Gesha"),
+    ])
+    note = "**[Dayglow Sudan Rume](https://d.com/1)** 250g $55\nvery rare"
+    roster = brief.render_roster(catalog, note)
+    assert "Sudan Rume" not in roster
+    assert "Takesi Gesha" in roster
+
+
+def test_roster_titles_lose_the_shelf_boilerplate():
+    product = _product(title="LIMITED | PANAMA | Elida Estate - Falda | Geisha | Natural")
+    assert brief._roster_title(product) == "PANAMA Elida Estate - Falda Geisha Natural"
+    assert brief._roster_title(_product(title="Sudan Rume")) == "Sudan Rume"
+
+
+def test_a_grind_choice_is_not_a_size():
+    product = _product(price_label="12 oz / Whole Bean = $25.00")
+    assert brief._compact_price(product) == "12 oz $25"
+    assert brief._compact_price(_product(price_label="250 g = $24.50")) == "250 g $24.5"
+
+
+def test_verify_note_catches_a_roster_line_the_note_dropped():
+    catalog = _catalog([
+        _priced("Dayglow", "https://d.com/1", 55.0, 250, title="Sudan Rume"),
+        _priced("George Howell", "https://g.com/1", 65.0, 113,
+                title="Llaqta Pata Gesha"),
+    ])
+    short = "名册:\nDayglow:Sudan Rume 250 g $55\n算一下:带信号 2 支,都在名册里。"
+    problems = brief.verify_note(catalog, short)
+    assert len(problems) == 1
+    assert "ROSTER LINE MISSING (George Howell)" in problems[0]
+    assert "Llaqta Pata Gesha" in problems[0]
+
+    complete = short.replace(
+        "算一下", "George Howell:Llaqta Pata Gesha 113 g $65\n算一下"
+    )
+    assert brief.verify_note(catalog, complete) == []
+
+
+def test_a_one_product_roaster_can_never_be_its_own_price_standout():
+    """Its median is itself, so the ratio is 1.0 - conservative, not spurious.
+
+    Worth pinning: the signal gets quieter at a small shop rather than
+    firing on whatever that shop happens to list.
+    """
+    only = _priced("Tiny", "https://t.com/1", 90.0, 100)
+    medians = brief.roaster_median_per_100g([only])
+    assert brief.price_standout(only, medians["Tiny"]) == 0.0

@@ -281,21 +281,26 @@ Shape it loosely, in this order:
   real provenance behind it. What does not earn one is carrying a signal
   mechanically: a page that mentions a competition belonging to the farm's
   history has told you about the farm, not the coffee.
-- **then the roster: every remaining coffee with a signal, one line each.**
-  Group it by roaster, a single line per roaster with the coffees separated -
-  `Dayglow:Sudan Rume 250g $55｜Takesi Gesha 120g $68｜Takesi Peaberry 100g
-  $64（4.7x）` - no `--detail`, no argument for any of them. Sixty-odd
-  coffees across seventeen roasters is about seventeen lines this way, and it
-  is the difference between the reader learning a Sudan Rume is on the shelf
-  and never hearing of it. The roster is outside the length budget.
+- **then the roster, pasted from the tool.** Once the entries are written,
+  run `python -m coffee_watch.brief --roster` with the note so far on stdin.
+  It prints one line per roaster covering every remaining coffee that carries
+  a signal, already tidied and priced, and it leaves out anything you have
+  already linked. **Paste those lines verbatim.** Do not retype them, drop
+  roasters, or shorten the list to taste: asked to transcribe fifty-six rows
+  by hand, a run produced twenty-nine, lost George Howell completely and
+  dropped the Dayglow Sudan Rume - the exact coffee the roster exists to
+  surface - and then closed by saying they were all in the roster. Thirteen
+  lines of generated text cost nothing and cannot do that. The roster sits
+  outside the length budget.
 
   Nothing with a signal is ever dropped: a coffee is either an entry or on the
   roster. That replaces the old practice of reporting a count of exclusions,
   which read as "gone" when the coffee was still buyable.
 - **one line of arithmetic, so the reader can audit you.** How many carried
   each signal, how many became entries, and in one clause why the rest did
-  not - `名次候选 25,入选 6,其余多为农场旧履历（都在名册里）`. A reader cannot
-  disagree with a bare number.
+  not - `带信号 64 支,入选 5,其余在名册里`. Only claim the rest are on the
+  roster after `--verify-note` has passed; that sentence was false once
+  already, and a reader who counts the roster will catch it.
 
 **Every entry has to earn its place in its own words.** One or two lines, and
 they must say why this coffee is worth your attention - not what is missing
@@ -352,12 +357,13 @@ says something specific to that coffee rather than filling the same slots.
 Reach for `$/100g` only when it makes a point, and remember it only compares
 within a size tier.
 
-**Check the links before you deliver.** Pipe the finished note through
-`python -m coffee_watch.brief --verify-links`; it exits non-zero and names
-every URL that is not a product in this catalog, including one that is a
-prefix of a real URL. Fix what it reports and re-check. Every link in a note
-is hand-copied, and a reader on a phone finds out a link is dead by tapping
-it.
+**Check the note before you deliver.** Pipe the finished note through
+`python -m coffee_watch.brief --verify-note`. It exits non-zero and reports
+two things: a URL that is not a product in this catalog, including one that
+is merely a prefix of a real URL, and a roster line the note is missing. Both
+have shipped - a `cut -c1-260` sheared `al` off a product URL, and half the
+roster went unpasted under a sentence claiming it was complete. Fix what it
+reports and re-check until it is clean.
 
 Hold to these:
 

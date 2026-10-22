@@ -53,7 +53,7 @@
 - `python scrape_coffee.py --new-window-days 30` - widen the new-product window beyond the 7-day default to match a longer buying cadence.
 - `python scrape_coffee.py --run-deadline-s 600` - bound the whole scrape; roasters still in flight are cancelled and everything already collected is kept. Use it for any unattended run.
 - `python -m coffee_watch.brief` - render the newest catalog as the compact brief the skill reads (`--new-only`, `--available-only`, `--roaster NAME`, `--standouts`, `--competition`,
-  `--prized`, `--verify-links`, `--detail <title|url|id>`).
+  `--prized`, `--roster`, `--verify-note`, `--detail <title|url|id>`).
 - `python -m coffee_watch.hosts` - print the egress allowlist a cloud environment needs.
 - `pytest -q` - run the test suite.
 - `python -m py_compile scrape_coffee.py main.py coffee_watch/*.py tests/*.py` - quick syntax sanity check.

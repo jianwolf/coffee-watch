@@ -779,6 +779,20 @@ def render_competition(catalog: dict[str, Any]) -> str:
 LINK_RE = re.compile(r"\((https?://[^)\s]+)\)")
 
 
+def verify_note(catalog: dict[str, Any], note: str) -> list[str]:
+    """Everything mechanically checkable about a finished note."""
+    problems = verify_links(catalog, note)
+    for line in render_roster(catalog, note).splitlines():
+        roaster, _, _ = line.partition(":")
+        if line in note:
+            continue
+        problems.append(
+            f"ROSTER LINE MISSING ({roaster}): the note must carry this "
+            f"verbatim --\n            {line}"
+        )
+    return problems
+
+
 def verify_links(catalog: dict[str, Any], note: str) -> list[str]:
     """Problems with the URLs in a finished note, as readable lines.
 
@@ -853,6 +867,88 @@ def render_prized(catalog: dict[str, Any]) -> str:
                 )
             )
     return "\n".join(lines) + "\n"
+
+
+def signal_products(
+    catalog: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
+    """Buyable single coffees carrying any signal, and the roaster medians."""
+    buyable = [
+        product
+        for product in _products(catalog)
+        if product.get("availability") == "available"
+        and product.get("storefront_status") != "storefront_unavailable"
+        and is_single_coffee(product)
+    ]
+    medians = roaster_median_per_100g(buyable)
+    carrying = [
+        product
+        for product in buyable
+        if mentions_competition(product)
+        or prized_variety(product)
+        or price_standout(product, medians.get(str(product.get("roaster") or "")))
+    ]
+    return carrying, medians
+
+
+def _roster_title(product: dict[str, Any]) -> str:
+    """A roaster's title with its own shelf boilerplate taken off.
+
+    Deterministic, because the roster is compared against the note verbatim:
+    "LIMITED | PANAMA | Elida Estate - Falda | Geisha | Natural" becomes
+    "PANAMA Elida Estate - Falda Geisha Natural". Tidying is done here rather
+    than left to whoever writes the note, since a hand-tidied line no longer
+    matches and the check would fire on every run.
+    """
+    title = str(product.get("title") or "").strip()
+    title = re.sub(r"^\s*LIMITED\s*\|\s*", "", title, flags=re.IGNORECASE)
+    title = re.sub(r"\s*\|\s*", " ", title)
+    return re.sub(r"\s{2,}", " ", title).strip() or "(untitled)"
+
+
+def _compact_price(product: dict[str, Any]) -> str:
+    """"120 g $68" from a "120 g = $68.00" label."""
+    label = str(product.get("price_label") or "").strip()
+    if " = " not in label:
+        return label or "price not captured"
+    size, _, price = label.partition(" = ")
+    # "12 oz / Whole Bean" is a grind choice, not a size the reader needs.
+    size = re.sub(r"\s*/\s*(whole bean|ground).*$", "", size, flags=re.IGNORECASE)
+    return f"{size.strip()} {price.strip().rstrip('0').rstrip('.')}"
+
+
+def render_roster(catalog: dict[str, Any], note: str = "") -> str:
+    """The roster, already written out, one line per roaster.
+
+    Generated rather than transcribed. Asked to copy fifty-six rows by hand
+    into a note, a run produced twenty-nine, dropped George Howell entirely
+    and lost the Sudan Rume that the roster exists to surface - then closed
+    with "都在名册里". Anything already linked in `note` is treated as having
+    its own entry and left out.
+    """
+    carrying, _ = signal_products(catalog)
+    linked = set(LINK_RE.findall(note))
+    remaining = [
+        product
+        for product in carrying
+        if str(product.get("product_url") or "").strip() not in linked
+    ]
+    by_roaster: dict[str, list[dict[str, Any]]] = {}
+    for product in remaining:
+        by_roaster.setdefault(str(product.get("roaster") or ""), []).append(product)
+    lines = []
+    for roaster in sorted(by_roaster):
+        items = sorted(
+            by_roaster[roaster], key=lambda p: str(p.get("title") or "")
+        )
+        # ASCII separator: this module carries no non-ASCII text, and
+        # _roster_title has already stripped the pipes out of the titles.
+        rendered = " | ".join(
+            f"{_roster_title(item)} {_compact_price(item)}"
+            for item in items
+        )
+        lines.append(f"{roaster}:{rendered}")
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def render_standouts(catalog: dict[str, Any]) -> str:
@@ -1135,9 +1231,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="List competition candidates with the flagging phrase in context",
     )
     parser.add_argument(
-        "--verify-links",
+        "--roster",
         action="store_true",
-        help="Read a finished note on stdin and report URLs not in the catalog",
+        help="Print the roster lines to paste; reads the note so far on stdin",
+    )
+    parser.add_argument(
+        "--verify-note",
+        action="store_true",
+        help="Read a finished note on stdin and report bad links and dropped rows",
     )
     parser.add_argument(
         "--prized",
@@ -1181,12 +1282,17 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(render_competition(catalog))
         return 0
 
-    if args.verify_links:
-        problems = verify_links(catalog, sys.stdin.read())
+    if args.roster:
+        note = "" if sys.stdin.isatty() else sys.stdin.read()
+        sys.stdout.write(render_roster(catalog, note))
+        return 0
+
+    if args.verify_note:
+        problems = verify_note(catalog, sys.stdin.read())
         if not problems:
-            print("All links in the note resolve to catalog products.")
+            print("Links resolve and every roster line is present.")
             return 0
-        print(f"{len(problems)} bad link(s):", file=sys.stderr)
+        print(f"{len(problems)} problem(s):", file=sys.stderr)
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         return 1

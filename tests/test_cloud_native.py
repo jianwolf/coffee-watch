@@ -109,6 +109,8 @@ def test_skill_keeps_the_rules_that_prevent_wrong_recommendations():
         "ROASTER-TOP",  # price read as the seller's own assessment
         "regret them missing",  # the question the note answers
         "Nothing with a signal is ever dropped",  # no silent exclusions
+        "Paste those lines verbatim",  # a hand-copied roster lost half its rows
+        "--verify-note",  # the note is checked before it is delivered
         "one line of arithmetic",  # completeness must be auditable
         "is_new` does not mean today",  # a 5-day-old listing called 今天新上
         "only caveats is a failure",  # an entry must say why it belongs
