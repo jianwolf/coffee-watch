@@ -636,3 +636,77 @@ def test_the_header_points_at_the_prized_roster():
     header = "\n".join(brief.coverage(catalog))
     assert "prized varieties: 1 available product(s)" in header
     assert "--prized" in header
+
+
+def test_the_competition_phrase_comes_out_with_its_sentence():
+    """The drop/keep call needs the sentence, not a grep over the whole page."""
+    product = _product(
+        title="Honduras Fredy Perez",
+        raw_product_text=(
+            "Shop All Coffee Subscriptions Tea Matcha Chocolate Gifts "
+            "Fredy first entered the Honduras Cup of Excellence in 2019, and "
+            "in 2023 his coffee placed 14th nationally. "
+            "You may also like: Panama Savage Gesha"
+        ),
+    )
+    contexts = brief.competition_contexts(product)
+    assert len(contexts) == 1
+    assert "placed 14th nationally" in contexts[0]
+    assert "entered the Honduras Cup of Excellence in 2019" in contexts[0]
+
+
+def test_overlapping_phrases_do_not_repeat_the_same_window():
+    product = _product(
+        title="X",
+        raw_product_text="won the Cup of Excellence and then took first place too",
+    )
+    assert len(brief.competition_contexts(product)) == 1
+
+
+def test_a_far_apart_second_phrase_gets_its_own_window():
+    product = _product(
+        title="X",
+        raw_product_text=(
+            "took first place in 2019. " + ("filler text " * 80) + "Best of Panama 2024."
+        ),
+    )
+    assert len(brief.competition_contexts(product)) == 2
+
+
+def test_competition_candidates_exclude_what_cannot_be_bought():
+    catalog = _catalog([
+        _product(product_url="https://e.com/1", title="2026 Cup of Excellence #4"),
+        _product(
+            product_url="https://e.com/2",
+            title="Sold Out COE Lot",
+            availability="unavailable",
+        ),
+        _product(product_url="https://e.com/3", title="Washed Brazil"),
+    ])
+    out = brief.render_competition(catalog)
+    assert "1 buyable product(s)" in out
+    assert "Sold Out COE Lot" not in out
+    assert "<UNTRUSTED_SCRAPED_TEXT>" in out
+
+
+def test_a_truncated_link_in_the_note_is_caught_and_corrected():
+    """Shipped once: a column-cutting pipe dropped "al" off a product URL."""
+    full = "https://proudmarycoffee.com/products/nicaragua-buenos-aires-maracaturra-natural"
+    catalog = _catalog([_product(product_url=full, title="Maracaturra")])
+    note = f"**[Proud Mary]({full[:-2]})** 250g $28"
+    problems = brief.verify_links(catalog, note)
+    assert len(problems) == 1
+    assert "TRUNCATED" in problems[0]
+    assert full in problems[0]
+
+
+def test_a_clean_note_reports_no_link_problems():
+    url = "https://e.com/products/x"
+    catalog = _catalog([_product(product_url=url)])
+    assert brief.verify_links(catalog, f"see [x]({url}) today") == []
+
+
+def test_a_url_no_catalog_product_has_is_flagged_outright():
+    catalog = _catalog([_product(product_url="https://e.com/products/x")])
+    problems = brief.verify_links(catalog, "see [y](https://elsewhere.test/invented)")
+    assert problems == ["NOT IN CATALOG: https://elsewhere.test/invented"]

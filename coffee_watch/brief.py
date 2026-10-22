@@ -245,8 +245,7 @@ def mentions_competition(product: dict[str, Any]) -> bool:
     that the placing is this lot's is the agent's job, with --detail.
     """
     haystack = " ".join(
-        str(product.get(field) or "")
-        for field in ("title", "origin", "process", "raw_product_text")
+        str(product.get(field) or "") for field in COMPETITION_FIELDS
     )
     return bool(COMPETITION_RE.search(haystack))
 
@@ -299,6 +298,8 @@ def prized_variety(product: dict[str, Any]) -> str:
     match = PRIZED_VARIETY_RE.search(haystack)
     return match.group(0) if match else ""
 
+
+COMPETITION_FIELDS = ("title", "origin", "process", "raw_product_text")
 
 NOTES_IN_TEXT_HINT = "(in page text, use --detail)"
 
@@ -574,6 +575,101 @@ def coverage(catalog: dict[str, Any]) -> list[str]:
     return lines
 
 
+COMPETITION_CONTEXT_CHARS = 240
+
+
+def competition_contexts(
+    product: dict[str, Any], window: int = COMPETITION_CONTEXT_CHARS
+) -> list[str]:
+    """Each competition phrase on the page, with the text around it.
+
+    The judgement is narrow - does this placing belong to what is in the bag,
+    or to the farm's back catalogue, the variety's reputation, the region, or
+    a subscription blurb - and it only needs the sentence to make it.
+    Extracting that sentence here replaces a grep pipeline over seven
+    thousand characters of shop navigation, which on Onyx's pages found
+    nothing and got reported as a coffee with no placing of its own.
+    """
+    haystack = re.sub(
+        r"\s+",
+        " ",
+        " ".join(str(product.get(field) or "") for field in COMPETITION_FIELDS),
+    )
+    contexts: list[str] = []
+    end = 0
+    for match in COMPETITION_RE.finditer(haystack):
+        if match.start() < end:
+            continue  # already inside the window we just emitted
+        start = max(0, match.start() - window)
+        end = min(len(haystack), match.end() + window)
+        prefix = "..." if start > 0 else ""
+        suffix = "..." if end < len(haystack) else ""
+        contexts.append(f"{prefix}{haystack[start:end]}{suffix}")
+    return contexts
+
+
+def render_competition(catalog: dict[str, Any]) -> str:
+    """Every buyable competition candidate with the phrase that flagged it."""
+    products = [
+        product
+        for product in _products(catalog)
+        if product.get("availability") == "available"
+        and product.get("storefront_status") != "storefront_unavailable"
+        and mentions_competition(product)
+    ]
+    lines = [
+        "# coffee-watch competition candidates",
+        f"run: {catalog.get('run_id') or '(unknown)'}",
+        f"{len(products)} buyable product(s) whose page names a placing "
+        "somewhere, each with the phrase in context. Decide per coffee whether "
+        "the placing belongs to what is in the bag, or to the farm's back "
+        "catalogue, the variety's reputation, the region, or a subscription "
+        "blurb. Sold-out and page-blocked products are already excluded.",
+    ]
+    for product in products:
+        row = build_row(product)
+        lines.append("")
+        lines.append(f"## {row.roaster} - {row.title or '(untitled)'}")
+        lines.append(f"url: {row.url or '(no url)'}")
+        price = row.price_label or "price not captured"
+        lines.append(f"price: {price}" + (f" ({row.per_100g})" if row.per_100g else ""))
+        lines.append(f"flags: {' '.join(row.flags) if row.flags else '-'}")
+        lines.append(f"notes: {row.notes or '-'}")
+        lines.append("<UNTRUSTED_SCRAPED_TEXT>")
+        for context in competition_contexts(product) or ["(phrase not re-found)"]:
+            lines.append(f"- {context}")
+        lines.append("</UNTRUSTED_SCRAPED_TEXT>")
+    return "\n".join(lines) + "\n"
+
+
+LINK_RE = re.compile(r"\((https?://[^)\s]+)\)")
+
+
+def verify_links(catalog: dict[str, Any], note: str) -> list[str]:
+    """Problems with the URLs in a finished note, as readable lines.
+
+    A note's links are copied by hand out of listings, and one column-cutting
+    pipe turned a product URL into
+    ``.../nicaragua-buenos-aires-maracaturra-natur``: a dead link shipped to
+    the reader. Checking them against the catalog is mechanical, so it
+    belongs here rather than in an instruction not to truncate.
+    """
+    known = {
+        str(product.get("product_url") or "").strip() for product in _products(catalog)
+    }
+    known.discard("")
+    problems: list[str] = []
+    for url in dict.fromkeys(LINK_RE.findall(note)):
+        if url in known:
+            continue
+        near = sorted(k for k in known if k.startswith(url) or url.startswith(k))
+        if near:
+            problems.append(f"TRUNCATED: {url}\n            -> meant {near[0]}")
+        else:
+            problems.append(f"NOT IN CATALOG: {url}")
+    return problems
+
+
 def render_prized(catalog: dict[str, Any]) -> str:
     """Every buyable coffee whose own fields name a prized variety.
 
@@ -815,6 +911,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--roaster", default="", help="Filter to roasters matching this text")
     parser.add_argument(
+        "--competition",
+        action="store_true",
+        help="List competition candidates with the flagging phrase in context",
+    )
+    parser.add_argument(
+        "--verify-links",
+        action="store_true",
+        help="Read a finished note on stdin and report URLs not in the catalog",
+    )
+    parser.add_argument(
         "--prized",
         action="store_true",
         help="List every buyable product naming a prized variety, grouped by roaster",
@@ -847,6 +953,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.prized:
         sys.stdout.write(render_prized(catalog))
         return 0
+
+    if args.competition:
+        sys.stdout.write(render_competition(catalog))
+        return 0
+
+    if args.verify_links:
+        problems = verify_links(catalog, sys.stdin.read())
+        if not problems:
+            print("All links in the note resolve to catalog products.")
+            return 0
+        print(f"{len(problems)} bad link(s):", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
 
     previous_path = args.previous
     if previous_path is None and not args.no_previous:

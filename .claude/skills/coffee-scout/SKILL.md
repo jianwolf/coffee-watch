@@ -63,7 +63,16 @@ is committed, namely `purchase-journal.md` - read it first, every run.
    and one line per product. The combined catalog itself is 1-3 MB of evidence
    and must not be loaded. Useful flags: `--new-only`, `--available-only`,
    `--roaster NAME`.
-5. **Pull detail while you decide, not only at the end.** `python -m
+5. **Take the two shortlists from the tool, not from a grep.**
+   `--competition` prints every buyable coffee whose page names a placing,
+   each with the flagging phrase already extracted in context, so the only
+   thing left is deciding whose placing it is. `--prized` prints the whole
+   prized-variety roster. Use both every run. Do not rebuild either one with
+   `grep ... | cut`: Onyx pages carry seven thousand characters of shop
+   navigation, and a grep over them found no placing at all and reported
+   coffees as having none, while a `cut -c1-260` on a row listing sheared the
+   end off a product URL and shipped a dead link.
+6. **Pull detail while you decide, not only at the end.** `python -m
    coffee_watch.brief --detail "<title, url or id>"` prints variants,
    page-visible sizes, dates and the captured page text. Most rows carry
    `notes-in-text`, meaning the flavor only exists in that page text, so you
@@ -208,10 +217,11 @@ Shape it loosely, in this order:
 - one short line of state - date, how many roasters returned data, and the
   verdict for the day
 - **every tier-one coffee, all of them.** The candidates are every row
-  carrying `COMP-MENTION`; the header gives the count. Check **each one** with
-  `--detail` and read its whole output rather than grepping a few lines - a
-  truncated read is how a coffee ends up described as "flavour not captured"
-  when the page has it. There is no cap: a third-party placing is the one
+  in `--competition`, which has already extracted the phrase that flagged
+  each one; the header gives the count. Decide from that phrase, and pull
+  `--detail` for the ones you are going to write up - reading its whole
+  output, not the first n characters, since a truncated read is how a coffee
+  ends up described as "flavour not captured" when the page has it. There is no cap: a third-party placing is the one
   claim the seller could not have written, so the reader must never be left
   wondering whether one went unmentioned. Say the arithmetic in the state line
   - checked N, listed M, dropped K - so the reader can see the list is
@@ -322,6 +332,13 @@ day is unavoidably a list; what keeps it from being a table is that each line
 says something specific to that coffee rather than filling the same slots.
 Reach for `$/100g` only when it makes a point, and remember it only compares
 within a size tier.
+
+**Check the links before you deliver.** Pipe the finished note through
+`python -m coffee_watch.brief --verify-links`; it exits non-zero and names
+every URL that is not a product in this catalog, including one that is a
+prefix of a real URL. Fix what it reports and re-check. Every link in a note
+is hand-copied, and a reader on a phone finds out a link is dead by tapping
+it.
 
 Hold to these:
 
