@@ -46,6 +46,7 @@ from .text_utils import (
     extract_visible_text,
     finalize_visible_text,
     grams_from_size_label,
+    merge_page_text,
     sanitize_html_to_text,
     trim_text_at_phrases,
 )
@@ -335,16 +336,25 @@ async def _fetch_storefront_product_pages(
         # description fallback, price, and size-label extraction.
         raw_visible = extract_visible_text(html)
         plain_text = finalize_visible_text(raw_visible, 0, remove_boilerplate=False)
-        page_text = extract_product_jsonld_text(
+        # Both sources, not one or the other. JSON-LD carries the roaster's
+        # own clean description; the rendered page carries whatever the theme
+        # puts outside it. On Proud Mary's theme the tasting notes are a
+        # Shopify metafield rendered into div.product-meta and absent from
+        # both JSON-LD and products.json body_html, so preferring JSON-LD
+        # discarded the only copy of "Floral, passionfruit, dried apricot"
+        # and the coffee was reported as having no flavour on the page.
+        jsonld_text = extract_product_jsonld_text(
             html,
             ctx.settings.page_text_max_chars,
             page_url=product.url,
         )
-        if not page_text:
-            page_text = finalize_visible_text(
-                raw_visible,
-                ctx.settings.page_text_max_chars,
-            )
+        visible_text = finalize_visible_text(
+            raw_visible,
+            ctx.settings.page_text_max_chars,
+        )
+        page_text = merge_page_text(
+            jsonld_text, visible_text, ctx.settings.page_text_max_chars
+        )
         return (
             product.url,
             extract_product_page_size_labels(html, plain_text=plain_text),

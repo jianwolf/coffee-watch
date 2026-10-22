@@ -32,6 +32,7 @@ from .text_utils import (
     extract_product_page_size_labels,
     extract_visible_text,
     finalize_visible_text,
+    merge_page_text,
 )
 from .url_utils import (
     build_url_with_params,
@@ -742,11 +743,19 @@ async def fetch_product_page_text(
     # work from the same visible-text pass.
     raw_visible = extract_visible_text(html)
     plain_text = finalize_visible_text(raw_visible, 0, remove_boilerplate=False)
-    page_text = extract_product_jsonld_text(
+    # Both sources, not one or the other: JSON-LD carries the roaster's own
+    # description and nothing else, while the rendered page carries the
+    # theme's metafield blocks. Proud Mary puts the tasting notes in a
+    # metafield absent from both JSON-LD and products.json body_html, so
+    # preferring JSON-LD threw away the only copy of "Floral, passionfruit,
+    # dried apricot" and the coffee read as having no flavour on its page.
+    jsonld_text = extract_product_jsonld_text(
         html, settings.page_text_max_chars, page_url=product.url
     )
-    if not page_text:
-        page_text = finalize_visible_text(raw_visible, settings.page_text_max_chars)
+    visible_text = finalize_visible_text(raw_visible, settings.page_text_max_chars)
+    page_text = merge_page_text(
+        jsonld_text, visible_text, settings.page_text_max_chars
+    )
     log.info(
         "Sanitized %s chars of page text for %s", len(page_text), product.url
     )

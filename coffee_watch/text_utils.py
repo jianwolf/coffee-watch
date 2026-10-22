@@ -507,6 +507,27 @@ def _normalize_url_for_compare(url: str) -> str:
     return cleaned.rstrip("/").lower()
 
 
+def merge_page_text(jsonld_text: str, visible_text: str, max_chars: int) -> str:
+    """JSON-LD description first, then what the rendered page adds.
+
+    Neither source contains the other. JSON-LD is the roaster's own product
+    description; the rendered page also carries the theme's metafield blocks,
+    which is where some shops put the tasting notes, plus navigation. Both
+    page-fetch paths used to prefer JSON-LD and drop the page, which silently
+    cost every such coffee its flavour.
+    """
+    if not jsonld_text:
+        return visible_text[:max_chars] if max_chars > 0 else visible_text
+    if not visible_text:
+        return jsonld_text
+    if max_chars <= 0:
+        return f"{jsonld_text}\n{visible_text}"
+    remaining = max_chars - len(jsonld_text) - 1
+    if remaining <= 0:
+        return jsonld_text[:max_chars]
+    return f"{jsonld_text}\n{visible_text[:remaining]}"
+
+
 def extract_product_jsonld_text(
     html: str, max_chars: int, page_url: str = ""
 ) -> str:

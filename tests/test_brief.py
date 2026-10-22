@@ -924,3 +924,33 @@ def test_verify_note_checks_links_and_no_longer_demands_a_roster():
     assert brief.verify_note(catalog, "[y](https://nope.test/a)") == [
         "NOT IN CATALOG: https://nope.test/a"
     ]
+
+
+def test_page_text_keeps_both_sources():
+    """Preferring JSON-LD threw away the only copy of the tasting notes.
+
+    Proud Mary renders "Floral, passionfruit, dried apricot" from a Shopify
+    metafield that appears in neither JSON-LD nor products.json body_html,
+    so the coffee read as having no flavour on its own page - and was left
+    out of a note on exactly that ground.
+    """
+    from coffee_watch.text_utils import merge_page_text
+
+    jsonld = "Name: Elida Falda | Description: The Lamastus family legacy."
+    visible = "Tasting Notes Floral, passionfruit, dried apricot, & syrupy"
+    merged = merge_page_text(jsonld, visible, 6000)
+    assert jsonld in merged
+    assert "passionfruit" in merged
+    # JSON-LD first: the clean copy comes before the page's navigation noise.
+    assert merged.index("Lamastus") < merged.index("passionfruit")
+
+
+def test_page_text_merge_respects_the_cap_and_single_sources():
+    from coffee_watch.text_utils import merge_page_text
+
+    assert merge_page_text("", "visible only", 6000) == "visible only"
+    assert merge_page_text("jsonld only", "", 6000) == "jsonld only"
+    assert len(merge_page_text("a" * 100, "b" * 100, 150)) <= 150
+    # A JSON-LD description already at the cap leaves no room, and must not
+    # overflow it to append anything.
+    assert len(merge_page_text("a" * 200, "b" * 50, 150)) == 150
