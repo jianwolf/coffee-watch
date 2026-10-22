@@ -100,7 +100,9 @@ def test_skill_keeps_the_rules_that_prevent_wrong_recommendations():
         "purchase-journal.md",  # the only durable state
         "Flavour notes describe, they do not rank",  # copywriting is not quality
         "competition result or third-party placing",  # the hardest-to-fake signal
-        "there is no cap on this group",  # tier one is never truncated
+        "every tier-one coffee, all of them",  # no early stopping
+        "checked N, listed M, dropped K",  # completeness must be auditable
+        "only caveats is a failure",  # an entry must say why it belongs
         "COMP-MENTION",  # the mechanical candidate flag
     ):
         assert required in skill, f"{required!r} must stay in the skill"
