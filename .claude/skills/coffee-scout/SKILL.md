@@ -321,17 +321,28 @@ about it:
 - **The placing, specifically.** Which competition, which year, which rank, and
   whose it is. "2026 Honduras Cup of Excellence #4" earns a line; "has won
   awards" does not.
-- **How it tastes.** Most rows keep the notes in the page text, so take them
-  from the `--detail` output. Only say the flavour was not captured after you
-  have actually read that output and found none - and read all of it, not the
-  first n characters: a `cut -c1-1700` on a 3200-character page is the same
-  truncated read under a different name. Some pages genuinely have none. Proud
-  Mary's Elida listing is two thousand characters of estate history with no cup
-  description anywhere, so "风味没提取" is simply true there - but it can never
-  be the whole of what the line says. Put something else concrete from the page
-  in its place: the producer, the elevation, the harvest date, the section of
-  the farm, how the process was actually run. Three words of real provenance
-  beat a sentence about an absence.
+- **How it tastes, always.** This is not optional and not tradeable against
+  provenance: an entry without a flavour does not go in the note. Most rows
+  carry `notes-in-text`, meaning the notes exist only in the page body, so
+  they come from `--detail`.
+
+  **Read the whole `--detail` output.** Not `cut -c1-1700`, not
+  `cut -c1-2500`, not `head -40`. Three separate runs cut the page off above
+  the description and then reported that the page had none, and one of them
+  did it on a coffee a previous run had quoted notes for. There is no
+  mechanical rescue for this: extracting the flavour was attempted twice and
+  both attempts only worked on pages whose `tasting_notes` field was already
+  populated - the ones that need no help - while on Onyx, whose notes sit
+  unlabelled in the page body as "Yellow Pear Chamomile Almond Vanilla
+  Blossom", the extractor returned the shop's navigation menu. Reading the
+  output is the only thing that works.
+
+  Some pages genuinely have none: Proud Mary's Elida listing is two thousand
+  characters of estate history with no cup description anywhere. That coffee
+  does not get an entry today. Its provenance is real and it may be a fine
+  coffee, but "a Geisha from a Best of Panama estate, flavour unknown" is the
+  shape of recommendation this note exists to avoid - the reader cannot tell
+  from it whether they want the coffee.
 - **Whose placing it is, when it is not this coffee's.** A coffee can be worth
   naming even though the placing belongs to the estate's other lot or an
   earlier year - a 2025 natural Geisha off the same section of a farm that won
@@ -344,9 +355,11 @@ about it:
   described concretely (hours, stages, temperatures), the producer's record,
   the elevation.
 
-An entry that is only caveats is a failure. If, after reading the detail, you
-cannot say anything concrete about why a coffee belongs on the list, it does
-not belong on the list - drop it instead of listing it with an apology.
+An entry that is only caveats is a failure, and so is an entry whose flavour
+line is an absence. If, after reading the whole detail output, you cannot say
+how a coffee tastes and why it belongs, it does not belong in the note - leave
+it out instead of listing it with an apology. Landing on two entries is a
+good day's work when only two pages told you anything.
 Caveats (unverified size, API weight, aged stock) ride at the end of the line
 they belong to, never as the whole line.
 

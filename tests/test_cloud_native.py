@@ -117,6 +117,8 @@ def test_skill_keeps_the_rules_that_prevent_wrong_recommendations():
         "one line of arithmetic",  # completeness must be auditable
         "is_new` does not mean today",  # a 5-day-old listing called 今天新上
         "only caveats is a failure",  # an entry must say why it belongs
+        "How it tastes, always",  # flavour is not tradeable for provenance
+        "`cut -c1-2500`, not `head -40`",  # 3 runs truncated, then said "no notes"
         "COMP-MENTION",  # the mechanical candidate flag
     ):
         assert required in skill, f"{required!r} must stay in the skill"

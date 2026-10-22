@@ -1179,11 +1179,20 @@ def render_detail(catalog: dict[str, Any], needle: str) -> str:
                     f"price: {row.price_label or '-'} ({row.per_100g or 'size unknown'}) "
                     f"source={product.get('price_source') or '-'}",
                     f"flags: {' '.join(row.flags) or '-'}",
-                    f"variants: {json.dumps(_variants(product), ensure_ascii=False)}",
-                    f"visible on page: {product.get('visible_variant_titles') or '-'}",
+                    f"tasting_notes: {row.notes or '-'}",
+                    # origin/process/notes sit above the variants JSON, which
+                    # is several hundred characters of nothing a reader needs
+                    # and used to push the useful fields past a truncating
+                    # pipe. Two attempts at extracting the flavour itself are
+                    # deliberately absent: both measured well only on the
+                    # pages whose tasting_notes field was already populated -
+                    # the ones that do not need extracting - and the second
+                    # returned Onyx's navigation menu for a coffee whose
+                    # notes sit unlabelled in the page body.
                     f"origin: {product.get('origin') or '-'}",
                     f"process: {product.get('process') or '-'}",
-                    f"tasting_notes: {row.notes or '-'}",
+                    f"visible on page: {product.get('visible_variant_titles') or '-'}",
+                    f"variants: {json.dumps(_variants(product), ensure_ascii=False)}",
                     f"published_at: {product.get('shopify_published_at') or '-'} "
                     f"update_date: {product.get('update_date') or '-'} "
                     f"date_source: {product.get('date_source') or '-'}",
