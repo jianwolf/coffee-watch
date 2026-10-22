@@ -854,7 +854,7 @@ def test_the_roster_is_generated_whole_rather_than_transcribed():
     assert "Sudan Rume 250 g $55" in roster
     assert "Takesi Gesha 120 g $68" in roster
     # George Howell's single signal coffee gets its own line, not an omission.
-    assert "George Howell:Mamuto AA, Kenya 8 oz $45" in roster
+    assert "George Howell:[Mamuto AA, Kenya 8 oz $45](https://g.com/1)" in roster
     assert "House Blend" not in roster
     assert len(roster.strip().splitlines()) == 2
 
@@ -888,14 +888,18 @@ def test_verify_note_catches_a_roster_line_the_note_dropped():
         _priced("George Howell", "https://g.com/1", 65.0, 113,
                 title="Llaqta Pata Gesha"),
     ])
-    short = "名册:\nDayglow:Sudan Rume 250 g $55\n算一下:带信号 2 支,都在名册里。"
+    short = (
+        "名册:\nDayglow:[Sudan Rume 250 g $55](https://d.com/1)\n"
+        "算一下:带信号 2 支,都在名册里。"
+    )
     problems = brief.verify_note(catalog, short)
     assert len(problems) == 1
     assert "ROSTER LINE MISSING (George Howell)" in problems[0]
     assert "Llaqta Pata Gesha" in problems[0]
 
     complete = short.replace(
-        "算一下", "George Howell:Llaqta Pata Gesha 113 g $65\n算一下"
+        "算一下",
+        "George Howell:[Llaqta Pata Gesha 113 g $65](https://g.com/1)\n算一下",
     )
     assert brief.verify_note(catalog, complete) == []
 
@@ -909,3 +913,51 @@ def test_a_one_product_roaster_can_never_be_its_own_price_standout():
     only = _priced("Tiny", "https://t.com/1", 90.0, 100)
     medians = brief.roaster_median_per_100g([only])
     assert brief.price_standout(only, medians["Tiny"]) == 0.0
+
+
+def test_every_roster_coffee_carries_its_link():
+    """A masked link renders as its name, so the line reads the same."""
+    catalog = _catalog([
+        _priced("Dayglow", "https://d.com/takesi", 68.0, 120, title="Takesi Gesha"),
+    ])
+    line = brief.render_roster(catalog).strip()
+    assert line == "Dayglow:[Takesi Gesha 120 g $68](https://d.com/takesi)"
+
+
+def test_a_coffee_with_no_url_still_appears_unlinked():
+    catalog = _catalog([
+        _priced("Dayglow", "https://d.com/1", 68.0, 120, title="Takesi Gesha"),
+    ])
+    catalog["products"][0]["product_url"] = ""
+    assert brief.render_roster(catalog).strip() == "Dayglow:Takesi Gesha 120 g $68"
+
+
+def test_a_long_roaster_is_split_before_discord_can_cut_a_link():
+    """The poster hard-splits a line over 2000 chars, which would halve a URL.
+
+    Splitting here keeps every line whole and every link intact.
+    """
+    products = [
+        _priced("Big Shop", f"https://b.com/{'x' * 60}/{i}", 60.0, 100,
+                title=f"Gesha Lot {i} {'long name ' * 5}")
+        for i in range(40)
+    ]
+    products += [_priced("Big Shop", f"https://b.com/cheap{i}", 5.0, 250)
+                 for i in range(40)]
+    lines = brief.render_roster(_catalog(products)).strip().splitlines()
+    assert len(lines) > 1, "this fixture must exceed one line"
+    for line in lines:
+        assert line.startswith("Big Shop:")
+        assert len(line) <= brief.ROSTER_LINE_LIMIT
+        assert line.count("[") == line.count("]") == line.count("](")
+    # Splitting must not lose anyone.
+    assert sum(line.count("](") for line in lines) == 40
+
+
+def test_verify_note_still_matches_the_linked_lines():
+    catalog = _catalog([
+        _priced("Dayglow", "https://d.com/takesi", 68.0, 120, title="Takesi Gesha"),
+    ])
+    roster = brief.render_roster(catalog)
+    assert brief.verify_note(catalog, f"note\n{roster}") == []
+    assert brief.verify_note(catalog, "note\nDayglow:Takesi Gesha 120 g $68")

@@ -284,8 +284,12 @@ Shape it loosely, in this order:
 - **then the roster, pasted from the tool.** Once the entries are written,
   run `python -m coffee_watch.brief --roster` with the note so far on stdin.
   It prints one line per roaster covering every remaining coffee that carries
-  a signal, already tidied and priced, and it leaves out anything you have
-  already linked. **Paste those lines verbatim.** Do not retype them, drop
+  a signal, already tidied, priced and linked, and it leaves out anything you
+  have already linked. **Paste those lines verbatim.** Every coffee on it is
+  a masked link, so the line reads the same length and still taps through,
+  and a roaster with too many coffees for one line is already split across
+  several - Discord hard-splits an over-long line and would cut a link in
+  half. Do not retype them, drop
   roasters, or shorten the list to taste: asked to transcribe fifty-six rows
   by hand, a run produced twenty-nine, lost George Howell completely and
   dropped the Dayglow Sudan Rume - the exact coffee the roster exists to

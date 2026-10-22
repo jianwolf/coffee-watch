@@ -917,14 +917,48 @@ def _compact_price(product: dict[str, Any]) -> str:
     return f"{size.strip()} {price.strip().rstrip('0').rstrip('.')}"
 
 
+# A roster line is never allowed to reach Discord's 2000-character message
+# limit, because the poster hard-splits an over-long line and would cut a
+# markdown link in half, spilling a raw URL into the note. A roaster with
+# many coffees gets several lines instead, each carrying its name.
+ROSTER_LINE_LIMIT = 1500
+
+
+def _roster_entry(product: dict[str, Any]) -> str:
+    """One coffee as a masked link, or bare text when it has no URL."""
+    label = f"{_roster_title(product)} {_compact_price(product)}"
+    url = str(product.get("product_url") or "").strip()
+    return f"[{label}]({url})" if url else label
+
+
+def _roster_lines(roaster: str, entries: list[str]) -> list[str]:
+    """One line per roaster, split further when a line would run too long."""
+    lines: list[str] = []
+    current: list[str] = []
+    for entry in entries:
+        candidate = [*current, entry]
+        width = len(roaster) + 1 + len(" | ".join(candidate))
+        if current and width > ROSTER_LINE_LIMIT:
+            lines.append(f"{roaster}:{' | '.join(current)}")
+            current = [entry]
+        else:
+            current = candidate
+    if current:
+        lines.append(f"{roaster}:{' | '.join(current)}")
+    return lines
+
+
 def render_roster(catalog: dict[str, Any], note: str = "") -> str:
-    """The roster, already written out, one line per roaster.
+    """The roster, already written out, grouped by roaster.
 
     Generated rather than transcribed. Asked to copy fifty-six rows by hand
     into a note, a run produced twenty-nine, dropped George Howell entirely
     and lost the Sudan Rume that the roster exists to surface - then closed
     with "都在名册里". Anything already linked in `note` is treated as having
     its own entry and left out.
+
+    Each coffee is a markdown link, which costs a reader nothing: a masked
+    link renders as its name, so the line looks the same and taps through.
     """
     carrying, _ = signal_products(catalog)
     linked = set(LINK_RE.findall(note))
@@ -943,11 +977,11 @@ def render_roster(catalog: dict[str, Any], note: str = "") -> str:
         )
         # ASCII separator: this module carries no non-ASCII text, and
         # _roster_title has already stripped the pipes out of the titles.
-        rendered = " | ".join(
-            f"{_roster_title(item)} {_compact_price(item)}"
+        rendered = [
+            _roster_entry(item)
             for item in items
-        )
-        lines.append(f"{roaster}:{rendered}")
+        ]
+        lines.extend(_roster_lines(roaster, rendered))
     return "\n".join(lines) + ("\n" if lines else "")
 
 
