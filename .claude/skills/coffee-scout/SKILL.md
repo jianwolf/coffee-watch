@@ -171,22 +171,63 @@ Worth interrupting someone for:
 Those are keywords, and keywords are generous: on a normal catalog a sixth of
 the shelf matches one. They get you a candidate list, not a shortlist.
 
-**Rank on evidence of quality, strongest evidence first.** The ordering below
-is by how hard the signal is to fake, not by how good it sounds:
+**Judge the coffee on several kinds of evidence at once. None of them is a
+tier.** An earlier version of this skill ranked a competition placing above
+everything else on the grounds that it is the hardest claim to fake. That is
+true, and it is a rule about *trusting* evidence, not about *how good a coffee
+is* - and using it as a quality ranking produced a real error: a Peru Cup of
+Excellence 11th place was listed above a TNT Lab Gesha from Hydrangea at
+$53/100g, with nothing to support the ordering. `--standouts` prints every
+coffee carrying any of these signals, with which ones it has.
 
-- **A competition result or third-party placing.** Cup of Excellence, Best of
-  Panama, an auction lot, a national placing. This is blind-cupped by someone
-  other than the seller, which makes it the only quality claim on the page the
-  seller could not simply have written. About 6% of a catalog has one, which is
-  a shortlist by itself. A stated cupping score would rank here too, but in
-  practice no roaster in this config publishes numbers.
-- **A prized variety**, where the variety genuinely carries cup potential:
-  Gesha, Sudan Rume, SL28, Pacamara, Wush Wush, Eugenioides, Laurina.
+- **A competition result**, weighed three ways and not just counted.
+  `--competition` prints the phrase and classifies the contest.
+  - *Whose it is.* The placing has to attach to what is in the bag: this lot,
+    this plot, or this producer's recent crop of the variety being sold. The
+    farm's back catalogue, the variety's reputation ("Chiroso has been at the
+    top of Cup of Excellence") and the region's record are provenance worth a
+    clause, not the coffee's own result.
+  - *What rank, in what field.* "Has a placing" flattens a Cup of Excellence
+    top three and a mid-table national placing into one claim. A national
+    11th is a good coffee, not a top-end one. Say the rank; if the page does
+    not give one, say that too.
+  - *What kind of contest.* A producer competition (Cup of Excellence, Best of
+    Panama, an auction lot) is producers entered against a country. A
+    `roaster-award (seller pays to enter)` is the shop choosing a category and
+    paying per sample - Global Coffee Awards publishes its own fee list and
+    advances the top 20% of each subcategory. The cupping is genuinely blind,
+    so it is not nothing, but it is the seller's own entry and must be named
+    as pay-to-enter rather than stood next to a Cup of Excellence placing.
+- **A price far above the roaster's own normal range** - `ROASTER-TOP:Nx`,
+  meaning N times that shop's median `$/100g`. This is the shop staking its
+  reputation on one lot, and it is the only signal on the page that costs the
+  seller something. It is read within one roaster's shelf and never across
+  roasters: measured medians run from $7 to $18 per 100 g, so a cross-shop
+  comparison only tells you which shop is dear. Mention the multiple and what
+  the money is for. **A low price is never evidence against a coffee** - cheap
+  is not a reason to skip anything, and nothing here demotes an inexpensive
+  bag.
+- **A prized variety**: Gesha, Sudan Rume, SL28, Pacamara, Wush Wush,
+  Eugenioides, Laurina, Chiroso, Pink Bourbon. `VARIETY:` flags these from the
+  roaster's own title and variety fields.
+- **A named estate, producer or processing lab** whose reputation is checkable
+  outside the page - Takesi, Elida, Hartmann, Esmeralda, Lamastus, Gesha
+  Village, Ninety Plus, TNT Lab, Finca El Paraiso, Lost Origin. This is
+  judgement and deliberately not in code: a list of prestigious farms is a
+  ranking, and `brief.py` does not rank. Note that the catalog's cross-roaster
+  recurrence does **not** find these - it surfaces the widely-traded
+  Ethiopian washing stations and Kenyan factories instead - so you cannot
+  infer prestige from how many shops carry a name.
 - **Traceability depth.** A named producer or single farm, a stated elevation,
   a specific variety, and a process described with real detail (hours, stages,
-  temperatures). This is structural: a roaster cannot manufacture it with
-  adjectives, and a fully traceable single lot is a better quality proxy than
-  any amount of prose.
+  temperatures). Structural: a roaster cannot manufacture it with adjectives.
+
+**A missing placing often means nothing at all.** Panama runs Best of Panama,
+not a Cup of Excellence programme, so a Panamanian Gesha has no COE result to
+lack - and Panama is where much of the top-end Gesha is. Established estates
+that sell out at their own prices have no reason to enter anything. Treat
+"carries no placing" as absence of that one signal, never as evidence against
+the coffee.
 
 **Flavour notes describe, they do not rank.** How vividly a coffee is written up
 measures the roaster's copywriting, not the coffee: some roasters publish a
@@ -203,9 +244,17 @@ lychee, dragon fruit" as better evidence than "floral, sweet".
   exactly one job: do not tell the user about the same coffee twice. (If
   something has been listed over six months and is still sitting there, you may
   mention that in passing.)
+
+  **`is_new` does not mean today.** It means the roaster published it inside
+  the `--new-window-days` window, which defaults to **seven days**. Calling a
+  five-day-old listing 今天新上 was wrong and got caught. When the listing date
+  matters, give the date from `--detail` - 10/17 上架 - and never a word that
+  claims a day the data does not support.
 - **Whether the price is a bargain.** Cheap is not a reason to recommend and
-  ordinary is not a reason to omit. Show size and price so the reader can
-  judge, and keep your own opinion of the value out of the selection.
+  ordinary is not a reason to omit. Keep your own opinion of the *value* out
+  of it - "good deal", "overpriced", "silly for a Pacamara" are all out. This
+  is not the same as ignoring price: `ROASTER-TOP:Nx` above is price read as
+  the seller's own assessment, which is evidence and belongs in the reasons.
 
 **Buyability is a caveat, never a gate.** A coffee whose size was not confirmed,
 whose weight came from the API, or that arrived via the Atom feed still belongs
@@ -222,67 +271,31 @@ Shape it loosely, in this order:
 
 - one short line of state - date, how many roasters returned data, and the
   verdict for the day
-- **every tier-one coffee, all of them.** The candidates are every row
-  in `--competition`, which has already extracted the phrase that flagged
-  each one; the header gives the count. Decide from that phrase, and pull
-  `--detail` for the ones you are going to write up - reading its whole
-  output, not the first n characters, since a truncated read is how a coffee
-  ends up described as "flavour not captured" when the page has it. There is no cap: a third-party placing is the one
-  claim the seller could not have written, so the reader must never be left
-  wondering whether one went unmentioned. Say the arithmetic in the state line
-  - checked N, listed M, dropped K - so the reader can see the list is
-  complete rather than trusting that it is. Twenty entries is a correct answer
-  on a day with twenty.
+- **an entry for every coffee you would regret them missing**, uncapped. The
+  candidates are `--standouts`; pull `--competition` for the phrase behind any
+  `COMP-MENTION`, and `--detail` for every one you write up. There is no cap
+  and no quota: ten is right on a day with ten and one is right on a day with
+  one. What earns an entry is evidence about the coffee, weighed as the
+  section above describes - a placing that is genuinely this lot's, a price
+  far outside its own shop's range, a prized variety or named estate with
+  real provenance behind it. What does not earn one is carrying a signal
+  mechanically: a page that mentions a competition belonging to the farm's
+  history has told you about the farm, not the coffee.
+- **then the roster: every remaining coffee with a signal, one line each.**
+  Group it by roaster, a single line per roaster with the coffees separated -
+  `Dayglow:Sudan Rume 250g $55｜Takesi Gesha 120g $68｜Takesi Peaberry 100g
+  $64（4.7x）` - no `--detail`, no argument for any of them. Sixty-odd
+  coffees across seventeen roasters is about seventeen lines this way, and it
+  is the difference between the reader learning a Sudan Rume is on the shelf
+  and never hearing of it. The roster is outside the length budget.
 
-  The flag is a *mention* of a competition anywhere on the page, and most
-  mentions are not this coffee's own result. **Keep it when the placing
-  attaches to what is in the bag**: this lot, this plot, or this producer's
-  recent crop of the variety being sold. "the plot he used to place 4th in
-  this year's Honduras Cup of Excellence" is a keep, and so is a producer who
-  placed third in 2025 and is selling that variety now. **Drop it when the
-  placing belongs to** the farm's back catalogue ("repeated recognition,
-  including first-place finishes"), the variety's reputation ("Chiroso has
-  been at the top of Cup of Excellence"), the region's reputation, or a
-  subscription blurb. Those four are most of a day's candidates, which is why
-  six keeps out of twenty-five is an ordinary result and not a truncated one.
-
-- **show the drops, and say where each one went.** After the entries, name
-  every candidate you dropped with its reason, grouped by reason so it stays
-  compact - two or three lines, no links, no prose, roaster plus coffee:
-  `剔除 17：农场旧履历 7（Onyx Santa Rosa…）→ 其中 5 支在下面的稀有品种名册里
-  ｜品种名气 4｜产区 1｜订阅盒 1`. Failing tier one is a demotion, not an
-  exit: a dropped candidate carrying `VARIETY:` is still on the roster below,
-  and the drop line must say so rather than reading as "gone". A reader cannot
-  disagree with a number, and these are the judgement calls most likely to be
-  wrong. This list is outside the length budget; it is bookkeeping, not news.
-
-- **the whole prized-variety roster, every run.** `--prized` prints every
-  buyable coffee whose own title or variety field names one, grouped by
-  roaster, sold-out and page-blocked already excluded. Paste it as a compact
-  roster - roaster, coffee, size, price, one line each, no `--detail` and no
-  argument for any of them - under a line saying what it is. Thirty-five
-  coffees is about ten lines this way, and it is the difference between the
-  reader seeing a Sudan Rume and a Takesi Gesha on the shelf and never
-  learning they existed. This roster is outside the length budget too.
-
-  Variety is the second tier of evidence, so it does not need to be new to be
-  worth naming; it needs an entry only when you have something to say about
-  it. Anything on the roster that also stands out - `is_new`, a process
-  described concretely, a producer the page makes a case for - gets promoted
-  out of the roster into a real entry above it, and then does not repeat in
-  the roster.
-- **full entries for tier two and three when they are `is_new`**, or when
-  something on the page makes a case worth a line - a process described
-  concretely, a producer the page argues for, an elevation. Everything else
-  prized stays on the roster, named but unargued. Recency decides which of
-  these gets paragraphs, never which gets mentioned at all: the roster is why
-  nothing rare goes missing, and `is_new` is only a budget for attention. When
-  no earlier catalog exists, `is_new` is the roaster's own `published_at`; say
-  so once rather than claiming a real delta. Give these a short lead-in of
-  their own - 今天新上的,没有名次但值得看一眼 - and hold them to the entry rules
-  below. Trailing one off the last tier-one entry as a 顺带 clause reads like
-  an afterthought the reader may skip, and these still need their roaster,
-  size, price and a reason.
+  Nothing with a signal is ever dropped: a coffee is either an entry or on the
+  roster. That replaces the old practice of reporting a count of exclusions,
+  which read as "gone" when the coffee was still buyable.
+- **one line of arithmetic, so the reader can audit you.** How many carried
+  each signal, how many became entries, and in one clause why the rest did
+  not - `名次候选 25,入选 6,其余多为农场旧履历（都在名册里）`. A reader cannot
+  disagree with a bare number.
 
 **Every entry has to earn its place in its own words.** One or two lines, and
 they must say why this coffee is worth your attention - not what is missing
@@ -331,8 +344,8 @@ they belong to, never as the whole line.
 - caveats only where they would change a purchase, as one short line
 
 Every pick needs its roaster, its size, its price and its link somewhere, but
-write them the way you would type them to a person - "Onyx,100g $14,给
-Pacamara 开这个价有点离谱" - not as a field list. Three picks carrying the same
+write them the way you would type them to a person - "Dayglow,100g $64,是他们
+自家中位价的 4.7 倍" - not as a field list. Three picks carrying the same
 five labelled fields is a table with the markdown filed off. A long tier-one
 day is unavoidably a list; what keeps it from being a table is that each line
 says something specific to that coffee rather than filling the same slots.

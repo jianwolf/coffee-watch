@@ -99,9 +99,18 @@ def test_skill_keeps_the_rules_that_prevent_wrong_recommendations():
         "UNTRUSTED_SCRAPED_TEXT",  # prompt injection via roaster copy
         "purchase-journal.md",  # the only durable state
         "Flavour notes describe, they do not rank",  # copywriting is not quality
-        "competition result or third-party placing",  # the hardest-to-fake signal
-        "every tier-one coffee, all of them",  # no early stopping
-        "checked N, listed M, dropped K",  # completeness must be auditable
+        # Competition evidence survives, but as one weighed input rather than
+        # the top tier: ranking by hardest-to-fake put a national 11th place
+        # above a $53/100g TNT Lab Gesha with nothing to support it.
+        "A competition result",  # still evidence
+        "seller pays to enter",  # a bought entry is not a producer placing
+        "A missing placing often means nothing at all",  # Panama has no CoE
+        "low price is never evidence against a coffee",  # cheap is not a demerit
+        "ROASTER-TOP",  # price read as the seller's own assessment
+        "regret them missing",  # the question the note answers
+        "Nothing with a signal is ever dropped",  # no silent exclusions
+        "one line of arithmetic",  # completeness must be auditable
+        "is_new` does not mean today",  # a 5-day-old listing called 今天新上
         "only caveats is a failure",  # an entry must say why it belongs
         "COMP-MENTION",  # the mechanical candidate flag
     ):

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import statistics
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -174,12 +175,18 @@ def selected_grams(product: dict[str, Any]) -> int:
     return 0
 
 
-def per_100g(product: dict[str, Any]) -> str:
+def per_100g_value(product: dict[str, Any]) -> float | None:
+    """Dollars per 100 g, or None when price or weight was never captured."""
     price = _price_value(product)
     grams = selected_grams(product)
     if price <= 0 or grams <= 0:
-        return ""
-    return f"${price * 100 / grams:.2f}/100g"
+        return None
+    return price * 100 / grams
+
+
+def per_100g(product: dict[str, Any]) -> str:
+    value = per_100g_value(product)
+    return "" if value is None else f"${value:.2f}/100g"
 
 
 def is_bulk_only(product: dict[str, Any]) -> bool:
@@ -199,7 +206,9 @@ def is_bulk_only(product: dict[str, Any]) -> bool:
     )
 
 
-def product_flags(product: dict[str, Any]) -> tuple[str, ...]:
+def product_flags(
+    product: dict[str, Any], roaster_median: float | None = None
+) -> tuple[str, ...]:
     flags: list[str] = []
     if product.get("is_new"):
         flags.append("new")
@@ -225,6 +234,8 @@ def product_flags(product: dict[str, Any]) -> tuple[str, ...]:
         flags.append("size-unverified")
     elif not product.get("price_variant"):
         flags.append("size?")
+    if not is_single_coffee(product):
+        flags.append("NOT-A-COFFEE")
     if product.get("errors"):
         flags.append("scrape-err")
     if not product.get("tasting_notes") and product.get("raw_product_text"):
@@ -234,6 +245,9 @@ def product_flags(product: dict[str, Any]) -> tuple[str, ...]:
     variety = prized_variety(product)
     if variety:
         flags.append(f"VARIETY:{variety}")
+    ratio = price_standout(product, roaster_median)
+    if ratio:
+        flags.append(f"ROASTER-TOP:{ratio:.1f}x")
     return tuple(flags)
 
 
@@ -299,6 +313,105 @@ def prized_variety(product: dict[str, Any]) -> str:
     return match.group(0) if match else ""
 
 
+# Shelf items that are not one lot of coffee. Every signal in this module
+# misreads them: a gift subscription priced per 45 g gram-weight came out at
+# nine times its roaster's median, a tea cake at four times, and a
+# subscription blurb promising "Geishas, Cup of Excellence winners" matched
+# the competition pattern. They stay in the brief, which is a projection of
+# the catalog, and are kept out of the shortlists, which are candidate lists.
+NON_COFFEE_RE = re.compile(
+    r"\bsubscription\b|\bbundle\b|gift card|gift certificate|\bmerch\b|"
+    r"\btea\b|\bmatcha\b|\bchocolate\b|\d+[- ]pack\b|\bmug\b|\btote\b|"
+    r"\bt-?shirt\b|\bdripper\b|\bkettle\b|filter papers",
+    re.IGNORECASE,
+)
+
+
+def is_single_coffee(product: dict[str, Any]) -> bool:
+    """False for subscriptions, bundles, gift cards, tea and equipment."""
+    return not NON_COFFEE_RE.search(str(product.get("title") or ""))
+
+
+# How many times its own roaster's median $/100g a coffee has to cost before
+# the price is saying something. Read *within* one roaster's shelf and never
+# across roasters: the signal is "this shop priced this one far above its own
+# normal range", which is the shop staking its reputation, not "expensive
+# coffee is better". The measured catalog has no useful cross-roaster
+# comparison - roaster medians run from $7 to $30 per 100 g - and five of the
+# ten most expensive coffees on it carried neither a competition mention nor
+# a prized variety, Finca Takesi's peaberry at $64/100g among them.
+#
+# A LOW ratio is not evidence against a coffee. Nothing here demotes a cheap
+# one; the flag only ever appears, never subtracts.
+PRICE_STANDOUT_MULTIPLE = 2.0
+
+
+def roaster_median_per_100g(products: list[dict[str, Any]]) -> dict[str, float]:
+    """Each roaster's median $/100g, over the rows where one exists."""
+    buckets: dict[str, list[float]] = {}
+    for product in products:
+        value = per_100g_value(product)
+        if value is None:
+            continue
+        buckets.setdefault(str(product.get("roaster") or ""), []).append(value)
+    return {
+        roaster: statistics.median(values)
+        for roaster, values in buckets.items()
+        if values
+    }
+
+
+def price_standout(product: dict[str, Any], roaster_median: float | None) -> float:
+    """This coffee's $/100g as a multiple of its roaster's median, else 0.0."""
+    if not roaster_median or roaster_median <= 0:
+        return 0.0
+    value = per_100g_value(product)
+    if value is None:
+        return 0.0
+    ratio = value / roaster_median
+    return ratio if ratio >= PRICE_STANDOUT_MULTIPLE else 0.0
+
+
+# Awards whose entrant is the seller, who chooses the category and pays per
+# sample. Global Coffee Awards publishes its own fee list (Europe: EUR 269 for
+# two entries to EUR 3,469 for thirty), requires a commercially registered
+# roastery, and advances the top 20% of each subcategory. The cupping is
+# double-blind by Q-graders, so it is real third-party scoring - but it is a
+# roasting award the seller bought entry to, not a producer competing against
+# a country. Worth saying out loud next to a Cup of Excellence placing.
+PAY_TO_ENTER_AWARDS = (
+    "global coffee awards",
+    "good food awards",
+    "golden bean",
+    "international coffee tasting",
+    "academy of chocolate",
+    "great taste award",
+)
+PRODUCER_COMPETITIONS = (
+    "cup of excellence",
+    "best of panama",
+    "national winner",
+    "auction lot",
+)
+
+
+def competition_event(text: str) -> str:
+    """What kind of contest a phrase names: the fact, not a ranking.
+
+    Returns "producer-competition", "roaster-award (seller pays to enter)",
+    or "unclassified". Which rank in which year is left to a reader, who
+    gets the phrase itself from render_competition.
+    """
+    lowered = text.lower()
+    if any(award in lowered for award in PAY_TO_ENTER_AWARDS):
+        return "roaster-award (seller pays to enter)"
+    if any(event in lowered for event in PRODUCER_COMPETITIONS):
+        return "producer-competition"
+    if re.search(r"\bcoe\b", lowered):
+        return "producer-competition"
+    return "unclassified"
+
+
 COMPETITION_FIELDS = ("title", "origin", "process", "raw_product_text")
 
 NOTES_IN_TEXT_HINT = "(in page text, use --detail)"
@@ -317,7 +430,7 @@ def _notes(product: dict[str, Any]) -> str:
     return joined
 
 
-def build_row(product: dict[str, Any]) -> Row:
+def build_row(product: dict[str, Any], roaster_median: float | None = None) -> Row:
     return Row(
         roaster=str(product.get("roaster") or "(unknown roaster)"),
         title=str(product.get("title") or "").strip(),
@@ -325,7 +438,7 @@ def build_row(product: dict[str, Any]) -> Row:
         price_label=str(product.get("price_label") or "").strip(),
         per_100g=per_100g(product),
         notes=_notes(product),
-        flags=product_flags(product),
+        flags=product_flags(product, roaster_median),
         grams=selected_grams(product),
     )
 
@@ -561,6 +674,23 @@ def coverage(catalog: dict[str, Any]) -> list[str]:
             f"prized varieties: {prized} available product(s) name one in their own "
             f"title or variety field (VARIETY:<name>); --prized lists them all"
         )
+    buyable = [
+        product
+        for product in _products(catalog)
+        if product.get("availability") == "available"
+    ]
+    medians = roaster_median_per_100g(buyable)
+    priced = sum(
+        1
+        for product in buyable
+        if price_standout(product, medians.get(str(product.get("roaster") or "")))
+    )
+    if priced:
+        lines.append(
+            f"price standouts: {priced} available product(s) cost at least "
+            f"{PRICE_STANDOUT_MULTIPLE:g}x their own roaster's median $/100g "
+            f"(ROASTER-TOP:Nx); --standouts lists every signal together"
+        )
     second = _mapping(summary.get("second_pass"))
     if second.get("retried"):
         lines.append(
@@ -616,6 +746,7 @@ def render_competition(catalog: dict[str, Any]) -> str:
         if product.get("availability") == "available"
         and product.get("storefront_status") != "storefront_unavailable"
         and mentions_competition(product)
+        and is_single_coffee(product)
     ]
     lines = [
         "# coffee-watch competition candidates",
@@ -635,8 +766,11 @@ def render_competition(catalog: dict[str, Any]) -> str:
         lines.append(f"price: {price}" + (f" ({row.per_100g})" if row.per_100g else ""))
         lines.append(f"flags: {' '.join(row.flags) if row.flags else '-'}")
         lines.append(f"notes: {row.notes or '-'}")
+        contexts = competition_contexts(product) or ["(phrase not re-found)"]
+        events = sorted({competition_event(context) for context in contexts})
+        lines.append(f"contest: {', '.join(events)}")
         lines.append("<UNTRUSTED_SCRAPED_TEXT>")
-        for context in competition_contexts(product) or ["(phrase not re-found)"]:
+        for context in contexts:
             lines.append(f"- {context}")
         lines.append("</UNTRUSTED_SCRAPED_TEXT>")
     return "\n".join(lines) + "\n"
@@ -683,6 +817,7 @@ def render_prized(catalog: dict[str, Any]) -> str:
         if product.get("availability") == "available"
         and product.get("storefront_status") != "storefront_unavailable"
         and prized_variety(product)
+        and is_single_coffee(product)
     ]
     lines = [
         "# coffee-watch prized varieties",
@@ -705,6 +840,85 @@ def render_prized(catalog: dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"## {roaster} ({len(rows)})")
         for row in sorted(rows, key=lambda r: r.title):
+            lines.append(
+                "- "
+                + " | ".join(
+                    [
+                        row.title or "(untitled)",
+                        row.price_label or "price not captured",
+                        row.per_100g or "-",
+                        f"[{' '.join(row.flags)}]" if row.flags else "[]",
+                        row.url or "(no url)",
+                    ]
+                )
+            )
+    return "\n".join(lines) + "\n"
+
+
+def render_standouts(catalog: dict[str, Any]) -> str:
+    """Every buyable coffee carrying any quality signal, with which ones.
+
+    One list instead of three, because the signals are not a hierarchy. A
+    competition placing, a prized variety and a price far above the shop's
+    own normal range are different kinds of evidence, and a coffee can carry
+    one without the others - which is how Finca Takesi's peaberry, the
+    second most expensive coffee in a measured catalog, was missed by both
+    of the earlier filters.
+    """
+    buyable = [
+        product
+        for product in _products(catalog)
+        if product.get("availability") == "available"
+        and product.get("storefront_status") != "storefront_unavailable"
+        and is_single_coffee(product)
+    ]
+    medians = roaster_median_per_100g(buyable)
+    rows: list[tuple[float, Row, dict[str, Any]]] = []
+    for product in buyable:
+        roaster = str(product.get("roaster") or "")
+        row = build_row(product, medians.get(roaster))
+        signals = [
+            flag
+            for flag in row.flags
+            if flag == "COMP-MENTION"
+            or flag.startswith("VARIETY:")
+            or flag.startswith("ROASTER-TOP:")
+        ]
+        if signals:
+            rows.append((price_standout(product, medians.get(roaster)), row, product))
+
+    price_only = [
+        row
+        for ratio, row, _ in rows
+        if ratio
+        and "COMP-MENTION" not in row.flags
+        and not any(f.startswith("VARIETY:") for f in row.flags)
+    ]
+    lines = [
+        "# coffee-watch standouts",
+        f"run: {catalog.get('run_id') or '(unknown)'}",
+        f"{len(rows)} buyable product(s) carrying at least one signal. "
+        "COMP-MENTION: the page names a placing somewhere (--competition "
+        "prints the phrase and what kind of contest it was). VARIETY: the "
+        "roaster's own fields name a prized variety. ROASTER-TOP:Nx: this "
+        "coffee costs N times its own roaster's median $/100g, which is that "
+        "shop pricing it far outside its normal range. The signals are "
+        "different kinds of evidence, not ranks, and a low price is never "
+        "evidence against a coffee.",
+        f"{len(price_only)} of them carry ONLY the price signal, so neither a "
+        "placing nor a prized variety would have surfaced them.",
+    ]
+    by_roaster: dict[str, list[tuple[float, Row]]] = {}
+    for ratio, row, _ in rows:
+        by_roaster.setdefault(row.roaster, []).append((ratio, row))
+    for roaster in sorted(by_roaster):
+        entries = sorted(by_roaster[roaster], key=lambda e: (-e[0], e[1].title))
+        median = medians.get(roaster)
+        head = f"## {roaster} ({len(entries)}"
+        head += f", median ${median:.2f}/100g)" if median else ")"
+        lines.append("")
+        lines.append(head)
+        for _, row in entries:
             lines.append(
                 "- "
                 + " | ".join(
@@ -911,6 +1125,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--roaster", default="", help="Filter to roasters matching this text")
     parser.add_argument(
+        "--standouts",
+        action="store_true",
+        help="List every buyable product carrying any quality signal, with which",
+    )
+    parser.add_argument(
         "--competition",
         action="store_true",
         help="List competition candidates with the flagging phrase in context",
@@ -952,6 +1171,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.prized:
         sys.stdout.write(render_prized(catalog))
+        return 0
+
+    if args.standouts:
+        sys.stdout.write(render_standouts(catalog))
         return 0
 
     if args.competition:

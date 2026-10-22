@@ -710,3 +710,119 @@ def test_a_url_no_catalog_product_has_is_flagged_outright():
     catalog = _catalog([_product(product_url="https://e.com/products/x")])
     problems = brief.verify_links(catalog, "see [y](https://elsewhere.test/invented)")
     assert problems == ["NOT IN CATALOG: https://elsewhere.test/invented"]
+
+
+def _priced(roaster, url, price, grams, **extra):
+    return _product(
+        roaster=roaster,
+        product_url=url,
+        price=f"{price:.2f}",
+        price_variant=f"{grams} g",
+        price_label=f"{grams} g = ${price:.2f}",
+        variants=[
+            {"title": f"{grams} g", "price": f"{price:.2f}", "grams": grams,
+             "available": True}
+        ],
+        **extra,
+    )
+
+
+def test_the_price_signal_is_read_inside_one_roasters_shelf():
+    """Roaster medians ran $7.21 to $18.00 in a measured catalog.
+
+    Comparing a coffee to the whole market only says which shop is pricey;
+    comparing it to its own shop says the shop thinks this one is different.
+    """
+    cheap_shop = [
+        _priced("Cheap Shop", f"https://c.com/{i}", 10.0, 250) for i in range(3)
+    ]
+    trophy = _priced("Cheap Shop", "https://c.com/t", 50.0, 100, title="Trophy")
+    dear_shop = [
+        _priced("Dear Shop", f"https://d.com/{i}", 40.0, 100) for i in range(3)
+    ]
+    medians = brief.roaster_median_per_100g([*cheap_shop, trophy, *dear_shop])
+    assert medians["Cheap Shop"] == 4.0
+    assert medians["Dear Shop"] == 40.0
+    # $50/100g is 12.5x its own shop's median...
+    assert brief.price_standout(trophy, medians["Cheap Shop"]) == 12.5
+    # ...while Dear Shop's ordinary $40/100g bag is not a standout at all.
+    assert brief.price_standout(dear_shop[0], medians["Dear Shop"]) == 0.0
+
+
+def test_a_cheap_coffee_is_never_marked_down():
+    """The user's rule: cheap is not a reason to skip something."""
+    medians = {"S": 20.0}
+    bargain = _priced("S", "https://s.com/b", 5.00, 250)
+    assert brief.price_standout(bargain, medians["S"]) == 0.0
+    flags = brief.product_flags(bargain, medians["S"])
+    assert not any("ROASTER" in f for f in flags)
+    assert not any(f.startswith("-") or "CHEAP" in f for f in flags)
+
+
+def test_no_price_or_no_weight_means_no_price_signal():
+    assert brief.price_standout(_product(price="0", variants=[]), 10.0) == 0.0
+    assert brief.price_standout(_priced("S", "https://s.com/1", 50.0, 100), None) == 0.0
+    assert brief.price_standout(_priced("S", "https://s.com/1", 50.0, 100), 0.0) == 0.0
+
+
+def test_the_roaster_top_flag_carries_the_multiple():
+    product = _priced("S", "https://s.com/1", 60.0, 100)
+    assert "ROASTER-TOP:3.0x" in brief.product_flags(product, 20.0)
+
+
+def test_shelf_items_that_are_not_one_coffee_are_marked_and_kept_off_shortlists():
+    """A gift subscription priced per 45 g read as nine times its own median."""
+    for title in [
+        "Gift Subscription",
+        "Deluxe Subscription",
+        "Signature Espresso Bundle",
+        "Up and Away 2026 Tea",
+        "Ceremonial Matcha",
+        "12oz 3-pack",
+        "Gift Card",
+    ]:
+        assert not brief.is_single_coffee(_product(title=title)), title
+        assert "NOT-A-COFFEE" in brief.product_flags(_product(title=title))
+    for title in ["Takesi Peaberry", "Las Virginias COE #4", "Sudan Rume"]:
+        assert brief.is_single_coffee(_product(title=title)), title
+
+    catalog = _catalog([
+        _product(product_url="https://e.com/1", title="Deluxe Subscription",
+                 raw_product_text="expect Geishas and Cup of Excellence winners"),
+        _product(product_url="https://e.com/2", title="Takesi Gesha"),
+    ])
+    competition = brief.render_competition(catalog)
+    assert "Deluxe Subscription" not in competition
+    assert "0 buyable product(s)" in competition
+    assert "Deluxe Subscription" not in brief.render_prized(catalog)
+    assert "Deluxe Subscription" not in brief.render_standouts(catalog)
+
+
+def test_the_kind_of_contest_is_classified_not_ranked():
+    """Global Coffee Awards charges the roaster per entry; CoE does not."""
+    assert brief.competition_event(
+        "2025 Global Coffee Awards experimental filter gold"
+    ) == "roaster-award (seller pays to enter)"
+    assert brief.competition_event(
+        "placed 4th in the 2026 Honduras Cup of Excellence"
+    ) == "producer-competition"
+    assert brief.competition_event("this auction lot") == "producer-competition"
+    assert brief.competition_event("placed 3rd in COE 2025") == "producer-competition"
+    # No rank is asserted anywhere: #1 and #30 classify identically.
+    assert brief.competition_event("COE #1") == brief.competition_event("COE #30")
+    assert brief.competition_event("the coevolution of plants") == "unclassified"
+
+
+def test_standouts_counts_what_only_the_price_signal_found():
+    """Finca Takesi's peaberry carried neither of the other two signals."""
+    catalog = _catalog([
+        _priced("Shop", "https://s.com/1", 10.0, 250),
+        _priced("Shop", "https://s.com/2", 10.0, 250),
+        _priced("Shop", "https://s.com/3", 10.0, 250),
+        _priced("Shop", "https://s.com/t", 64.0, 100, title="Takesi Peaberry"),
+        _priced("Shop", "https://s.com/g", 12.0, 250, title="Ordinary Gesha"),
+    ])
+    out = brief.render_standouts(catalog)
+    assert "Takesi Peaberry" in out
+    assert "1 of them carry ONLY the price signal" in out
+    assert "median $4.00/100g" in out
