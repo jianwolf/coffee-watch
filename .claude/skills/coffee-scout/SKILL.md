@@ -264,7 +264,23 @@ about it:
   awards" does not.
 - **How it tastes.** Most rows keep the notes in the page text, so take them
   from the `--detail` output. Only say the flavour was not captured after you
-  have actually read that output and found none.
+  have actually read that output and found none - and read all of it, not the
+  first n characters: a `cut -c1-1700` on a 3200-character page is the same
+  truncated read under a different name. Some pages genuinely have none. Proud
+  Mary's Elida listing is two thousand characters of estate history with no cup
+  description anywhere, so "风味没提取" is simply true there - but it can never
+  be the whole of what the line says. Put something else concrete from the page
+  in its place: the producer, the elevation, the harvest date, the section of
+  the farm, how the process was actually run. Three words of real provenance
+  beat a sentence about an absence.
+- **Whose placing it is, when it is not this coffee's.** A coffee can be worth
+  naming even though the placing belongs to the estate's other lot or an
+  earlier year - a 2025 natural Geisha off the same section of a farm that won
+  Best of Panama in 2024 is a real thing to know about. Say whose placing it is
+  and which lot, in the line. That is provenance, not an apology, and it does
+  not make the entry one of caveats. What does not survive is an entry with no
+  placing of its own, no flavour, and nothing else concrete to say: that one
+  goes in the drop line by name, which is what the drop line is for.
 - **What makes it unusual** when the page supports it: the variety, a process
   described concretely (hours, stages, temperatures), the producer's record,
   the elevation.
