@@ -131,8 +131,10 @@ Write like a friend who follows these roasters, texting about what turned up.
 dump, no restating the brief.
 
 Length follows the news, and there is no floor. One line is a complete reply on
-a quiet day. Twenty is the ceiling for a day with something real on it, and you
-should rarely need it. If you are deciding what else to add, you are done.
+a quiet day. The ceiling - about twenty lines - governs everything that is
+*not* a tier-one entry; tier one is uncapped and sets its own length, so a day
+with twelve placings is simply a longer note than a day with two. Neither is
+padded. If you are deciding what else to add, you are done.
 
 The question you are answering is **"is there anything here I would regret
 missing?"** - not "what is for sale". Most days the honest answer is no, and
@@ -209,14 +211,31 @@ Shape it loosely, in this order:
   carrying `COMP-MENTION`; the header gives the count. Check **each one** with
   `--detail` and read its whole output rather than grepping a few lines - a
   truncated read is how a coffee ends up described as "flavour not captured"
-  when the page has it. Drop only the ones where the placing turns out to
-  belong to the farm's history, a neighbouring lot or a subscription blurb, and
-  list every single one that survives. There is no cap: a third-party placing
-  is the one claim the seller could not have written, so the reader must never
-  be left wondering whether one went unmentioned. Say the arithmetic in the
-  state line - checked N, listed M, dropped K - so the reader can see the list
-  is complete rather than trusting that it is. Twenty entries is a correct
-  answer on a day with twenty.
+  when the page has it. There is no cap: a third-party placing is the one
+  claim the seller could not have written, so the reader must never be left
+  wondering whether one went unmentioned. Say the arithmetic in the state line
+  - checked N, listed M, dropped K - so the reader can see the list is
+  complete rather than trusting that it is. Twenty entries is a correct answer
+  on a day with twenty.
+
+  The flag is a *mention* of a competition anywhere on the page, and most
+  mentions are not this coffee's own result. **Keep it when the placing
+  attaches to what is in the bag**: this lot, this plot, or this producer's
+  recent crop of the variety being sold. "the plot he used to place 4th in
+  this year's Honduras Cup of Excellence" is a keep, and so is a producer who
+  placed third in 2025 and is selling that variety now. **Drop it when the
+  placing belongs to** the farm's back catalogue ("repeated recognition,
+  including first-place finishes"), the variety's reputation ("Chiroso has
+  been at the top of Cup of Excellence"), the region's reputation, or a
+  subscription blurb. Those four are most of a day's candidates, which is why
+  six keeps out of twenty-five is an ordinary result and not a truncated one.
+
+- **show the drops.** After the entries, name every candidate you dropped with
+  its reason, grouped by reason so it stays compact - two or three lines, no
+  links, no prose, roaster plus coffee: `剔除 19：农场旧履历 8（Onyx Santa Rosa、
+  Onyx Fredy Perez…）｜品种名气 4（…）｜产区 1｜订阅盒 1`. A reader cannot
+  disagree with a number, and these are the judgement calls most likely to be
+  wrong. This list is outside the length budget; it is bookkeeping, not news.
 - **tier two and three only when `is_new`**, and only the ones that stand out
   even among those. This is a budget, not a quality judgement: recency still
   says nothing about how good a coffee is, it only decides what is worth
@@ -224,11 +243,22 @@ Shape it loosely, in this order:
   standing tier-two coffee is not worse for being three weeks old - it simply
   is not news a second time. When no earlier catalog exists, `is_new` is the
   roaster's own `published_at`; say so once rather than claiming a real delta.
+  Give them a short lead-in of their own - 今天新上的,没有名次但值得看一眼 - and
+  hold them to the same entry rules below. Trailing one off the last tier-one
+  entry as a 顺带 clause reads like an afterthought the reader may skip, and
+  these still need their roaster, size, price and a reason.
 
 **Every entry has to earn its place in its own words.** One or two lines, and
 they must say why this coffee is worth your attention - not what is missing
 about it:
 
+- **Whose it is.** The roaster's name inside the entry, not left to the link.
+  This gets read on a phone, where nobody hovers a URL to find out which shop
+  a coffee is from - and that is the first thing the reader needs before they
+  can do anything about it. It also surfaces something a link never would:
+  two roasters selling the same farm's lot, which is a real choice the reader
+  should see rather than a coincidence they miss. Roaster and coffee together
+  on the entry's first line, every time.
 - **The placing, specifically.** Which competition, which year, which rank, and
   whose it is. "2026 Honduras Cup of Excellence #4" earns a line; "has won
   awards" does not.
@@ -248,11 +278,14 @@ they belong to, never as the whole line.
 - a clause for anything close but not urgent, if there is any
 - caveats only where they would change a purchase, as one short line
 
-Every pick needs its size, its price and its link somewhere, but write them the
-way you would type them to a person - "100g $14, which is silly for a
-Pacamara" - not as a field list. Three picks carrying the same five labelled
-fields is a table with the markdown filed off. Reach for `$/100g` only when it
-makes a point, and remember it only compares within a size tier.
+Every pick needs its roaster, its size, its price and its link somewhere, but
+write them the way you would type them to a person - "Onyx,100g $14,给
+Pacamara 开这个价有点离谱" - not as a field list. Three picks carrying the same
+five labelled fields is a table with the markdown filed off. A long tier-one
+day is unavoidably a list; what keeps it from being a table is that each line
+says something specific to that coffee rather than filling the same slots.
+Reach for `$/100g` only when it makes a point, and remember it only compares
+within a size tier.
 
 Hold to these:
 
