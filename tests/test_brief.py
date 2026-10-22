@@ -992,7 +992,25 @@ def test_standouts_says_how_many_entries_the_shelf_could_carry():
     ])
     out = brief.render_standouts(catalog)
     assert "3 buyable product(s) carrying at least one signal" in out
-    assert "2 of them have a flavour to quote" in out
+    assert "2 of the 3 have a flavour to quote" in out
     assert "Writing far fewer" in out
     # The count is a floor, and the header has to say so.
     assert "A floor, not a count" in out
+
+
+def test_the_quotable_count_is_the_shelf_not_the_sample():
+    """Counted after sampling it said 10 of 16 instead of 33 of 66.
+
+    The number exists so a six-entry note can be held against what the
+    shelf could carry; a sampled version flatters exactly the note it is
+    meant to check.
+    """
+    products = [
+        _priced("Shop", f"https://s.com/{i}", 60.0, 100, title=f"Gesha {i}",
+                tasting_notes=["Jasmine", "Peach"])
+        for i in range(30)
+    ]
+    out = brief.render_standouts(_catalog(products), sample=5)
+    assert "5 shown of 30" in out
+    assert "30 of the 30 have a flavour to quote" in out
+    assert "the whole shelf, not just the slice below" in out

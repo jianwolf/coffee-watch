@@ -1003,6 +1003,12 @@ def render_standouts(catalog: dict[str, Any], sample: int = 0) -> str:
             rows.append((price_standout(product, medians.get(roaster)), row, product))
 
     total = len(rows)
+    # Counted before the sample narrows anything: this number exists to say
+    # how many entries the whole shelf could carry, so a note that writes
+    # six can be held against it. Computed after sampling it reported ten of
+    # sixteen instead of thirty-three of sixty-six, which made a short note
+    # look like the shelf was short.
+    quotable = sum(1 for _, _, product in rows if has_quotable_flavour(product))
     sampled = sample_by_run(
         [product for _, _, product in rows],
         sample,
@@ -1034,11 +1040,13 @@ def render_standouts(catalog: dict[str, Any], sample: int = 0) -> str:
         "evidence against a coffee.",
         f"{len(price_only)} of them carry ONLY the price signal, so neither a "
         "placing nor a prized variety would have surfaced them.",
-        f"{sum(1 for _, _, product in rows if has_quotable_flavour(product))} of "
-        "them have a flavour to quote (a parsed tasting_notes field, or the "
-        "page's own Tasting Notes label). A floor, not a count: a shop that "
-        "writes its notes without a label is missed. Writing far fewer "
-        "entries than this is a choice, so say so in the note.",
+        f"{quotable} of the {total} have a flavour to quote (a parsed "
+        "tasting_notes field, or the page's own Tasting Notes label)"
+        + (" - the whole shelf, not just the slice below" if sample and
+           len(rows) < total else "")
+        + ". A floor, not a count: a shop that writes its notes without a "
+        "label is missed. Writing far fewer entries than this is a choice, "
+        "so say so in the note.",
     ]
     if sample and len(rows) < total:
         lines.append(
