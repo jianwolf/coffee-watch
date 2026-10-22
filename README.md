@@ -62,7 +62,7 @@ Setting up the cloud environment (network allowlist, timeouts, the monthly routi
 - `coffee_watch/reporting.py` - JSON output helpers and assets retention pruning
 - `coffee_watch/logging_utils.py` - text/JSON logging setup
 - `coffee_watch/seen_products.py` - SQLite first-seen tracker
-- `coffee_watch/brief.py` - compact catalog projection, delta, and detail lookup
+- `coffee_watch/brief.py` - compact catalog projection, delta, detail lookup, and the `--prized` variety roster
 - `coffee_watch/hosts.py` - egress allowlist generator for cloud environments
 - `.claude/skills/coffee-scout/` - the scouting skill
 - `.claude/settings.json` - committed allow rules and the cloud dependency hook

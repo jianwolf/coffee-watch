@@ -231,6 +231,9 @@ def product_flags(product: dict[str, Any]) -> tuple[str, ...]:
         flags.append("notes-in-text")
     if mentions_competition(product):
         flags.append("COMP-MENTION")
+    variety = prized_variety(product)
+    if variety:
+        flags.append(f"VARIETY:{variety}")
     return tuple(flags)
 
 
@@ -266,6 +269,36 @@ COMPETITION_RE = re.compile(
     r"(?<!in the )(?:1st|2nd|3rd|first|second|third)[- ]place|national winner",
     re.IGNORECASE,
 )
+
+# A variety whose name alone carries cup potential - the second-hardest
+# quality signal to fake after a third-party placing, because a roaster
+# cannot call a Caturra a Sudan Rume and have it survive a cupping.
+#
+# Matched against the roaster's own title and variety fields ONLY, never
+# raw_product_text: page text carries the site's navigation and related
+# products, which made an Ethiopian natural match "Pacamara" and an
+# Nicaraguan Maracaturra match "Geisha" when this was first measured over
+# the full text. 112 false hits became 35 real ones.
+PRIZED_VARIETY_RE = re.compile(
+    r"\bgei?sha\b|sudan rume|\bSL-?28\b|\bSL-?34\b|pacamara|wush ?wush|"
+    r"eugenioides|laurina|chiroso|pink bourbon|\bmokka\b|\bbourbon pointu\b",
+    re.IGNORECASE,
+)
+PRIZED_VARIETY_FIELDS = ("title", "variety")
+
+
+def prized_variety(product: dict[str, Any]) -> str:
+    """The prized variety this product's own fields name, or "".
+
+    Reads only the fields the roaster assigned to this product, so a Gesha
+    in the shop's navigation never lands on someone else's coffee.
+    """
+    haystack = " ".join(
+        str(product.get(field) or "") for field in PRIZED_VARIETY_FIELDS
+    )
+    match = PRIZED_VARIETY_RE.search(haystack)
+    return match.group(0) if match else ""
+
 
 NOTES_IN_TEXT_HINT = "(in page text, use --detail)"
 
@@ -517,6 +550,16 @@ def coverage(catalog: dict[str, Any]) -> list[str]:
             f"to the farm's history or a neighbouring lot - confirm with --detail "
             f"that it is this coffee's"
         )
+    prized = sum(
+        1
+        for product in _products(catalog)
+        if product.get("availability") == "available" and prized_variety(product)
+    )
+    if prized:
+        lines.append(
+            f"prized varieties: {prized} available product(s) name one in their own "
+            f"title or variety field (VARIETY:<name>); --prized lists them all"
+        )
     second = _mapping(summary.get("second_pass"))
     if second.get("retried"):
         lines.append(
@@ -529,6 +572,56 @@ def coverage(catalog: dict[str, Any]) -> list[str]:
     if failed:
         lines.append(f"failed: {', '.join(str(name) for name in failed)}")
     return lines
+
+
+def render_prized(catalog: dict[str, Any]) -> str:
+    """Every buyable coffee whose own fields name a prized variety.
+
+    A roster rather than a shortlist: uncapped, one line each, grouped by
+    roaster, and deliberately without tasting notes - the point is that
+    nothing rare goes unmentioned, not that each one gets an argument.
+    """
+    products = [
+        product
+        for product in _products(catalog)
+        if product.get("availability") == "available"
+        and product.get("storefront_status") != "storefront_unavailable"
+        and prized_variety(product)
+    ]
+    lines = [
+        "# coffee-watch prized varieties",
+        f"run: {catalog.get('run_id') or '(unknown)'}",
+        f"{len(products)} buyable product(s) whose own title or variety field names "
+        "a prized variety. The whole roster, uncapped; sold-out and page-blocked "
+        "products are already excluded. No tasting notes here - use --detail for "
+        "any you decide to write up.",
+    ]
+    if not products:
+        lines.append("")
+        lines.append("none this run")
+        return "\n".join(lines) + "\n"
+    by_roaster: dict[str, list[Row]] = {}
+    for product in products:
+        row = build_row(product)
+        by_roaster.setdefault(row.roaster, []).append(row)
+    for roaster in sorted(by_roaster):
+        rows = by_roaster[roaster]
+        lines.append("")
+        lines.append(f"## {roaster} ({len(rows)})")
+        for row in sorted(rows, key=lambda r: r.title):
+            lines.append(
+                "- "
+                + " | ".join(
+                    [
+                        row.title or "(untitled)",
+                        row.price_label or "price not captured",
+                        row.per_100g or "-",
+                        f"[{' '.join(row.flags)}]" if row.flags else "[]",
+                        row.url or "(no url)",
+                    ]
+                )
+            )
+    return "\n".join(lines) + "\n"
 
 
 def render_brief(
@@ -722,6 +815,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--roaster", default="", help="Filter to roasters matching this text")
     parser.add_argument(
+        "--prized",
+        action="store_true",
+        help="List every buyable product naming a prized variety, grouped by roaster",
+    )
+    parser.add_argument(
         "--detail",
         help="Print full captured evidence for products matching this title, URL or id",
     )
@@ -744,6 +842,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.detail:
         sys.stdout.write(render_detail(catalog, args.detail))
+        return 0
+
+    if args.prized:
+        sys.stdout.write(render_prized(catalog))
         return 0
 
     previous_path = args.previous

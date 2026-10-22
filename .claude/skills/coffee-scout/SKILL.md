@@ -230,23 +230,43 @@ Shape it loosely, in this order:
   subscription blurb. Those four are most of a day's candidates, which is why
   six keeps out of twenty-five is an ordinary result and not a truncated one.
 
-- **show the drops.** After the entries, name every candidate you dropped with
-  its reason, grouped by reason so it stays compact - two or three lines, no
-  links, no prose, roaster plus coffee: `剔除 19：农场旧履历 8（Onyx Santa Rosa、
-  Onyx Fredy Perez…）｜品种名气 4（…）｜产区 1｜订阅盒 1`. A reader cannot
+- **show the drops, and say where each one went.** After the entries, name
+  every candidate you dropped with its reason, grouped by reason so it stays
+  compact - two or three lines, no links, no prose, roaster plus coffee:
+  `剔除 17：农场旧履历 7（Onyx Santa Rosa…）→ 其中 5 支在下面的稀有品种名册里
+  ｜品种名气 4｜产区 1｜订阅盒 1`. Failing tier one is a demotion, not an
+  exit: a dropped candidate carrying `VARIETY:` is still on the roster below,
+  and the drop line must say so rather than reading as "gone". A reader cannot
   disagree with a number, and these are the judgement calls most likely to be
   wrong. This list is outside the length budget; it is bookkeeping, not news.
-- **tier two and three only when `is_new`**, and only the ones that stand out
-  even among those. This is a budget, not a quality judgement: recency still
-  says nothing about how good a coffee is, it only decides what is worth
-  raising again today versus what was already on the shelf yesterday. A
-  standing tier-two coffee is not worse for being three weeks old - it simply
-  is not news a second time. When no earlier catalog exists, `is_new` is the
-  roaster's own `published_at`; say so once rather than claiming a real delta.
-  Give them a short lead-in of their own - 今天新上的,没有名次但值得看一眼 - and
-  hold them to the same entry rules below. Trailing one off the last tier-one
-  entry as a 顺带 clause reads like an afterthought the reader may skip, and
-  these still need their roaster, size, price and a reason.
+
+- **the whole prized-variety roster, every run.** `--prized` prints every
+  buyable coffee whose own title or variety field names one, grouped by
+  roaster, sold-out and page-blocked already excluded. Paste it as a compact
+  roster - roaster, coffee, size, price, one line each, no `--detail` and no
+  argument for any of them - under a line saying what it is. Thirty-five
+  coffees is about ten lines this way, and it is the difference between the
+  reader seeing a Sudan Rume and a Takesi Gesha on the shelf and never
+  learning they existed. This roster is outside the length budget too.
+
+  Variety is the second tier of evidence, so it does not need to be new to be
+  worth naming; it needs an entry only when you have something to say about
+  it. Anything on the roster that also stands out - `is_new`, a process
+  described concretely, a producer the page makes a case for - gets promoted
+  out of the roster into a real entry above it, and then does not repeat in
+  the roster.
+- **full entries for tier two and three when they are `is_new`**, or when
+  something on the page makes a case worth a line - a process described
+  concretely, a producer the page argues for, an elevation. Everything else
+  prized stays on the roster, named but unargued. Recency decides which of
+  these gets paragraphs, never which gets mentioned at all: the roster is why
+  nothing rare goes missing, and `is_new` is only a budget for attention. When
+  no earlier catalog exists, `is_new` is the roaster's own `published_at`; say
+  so once rather than claiming a real delta. Give these a short lead-in of
+  their own - 今天新上的,没有名次但值得看一眼 - and hold them to the entry rules
+  below. Trailing one off the last tier-one entry as a 顺带 clause reads like
+  an afterthought the reader may skip, and these still need their roaster,
+  size, price and a reason.
 
 **Every entry has to earn its place in its own words.** One or two lines, and
 they must say why this coffee is worth your attention - not what is missing

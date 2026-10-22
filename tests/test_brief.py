@@ -572,3 +572,67 @@ def test_a_sold_out_competition_lot_is_not_counted():
         )
     ])
     assert "competition mentions" not in "\n".join(brief.coverage(catalog))
+
+
+def test_a_prized_variety_is_read_from_the_roasters_own_fields():
+    """The second-hardest signal to fake, after a third-party placing."""
+    assert brief.prized_variety(_product(title="Takesi Gesha")) == "Gesha"
+    assert brief.prized_variety(_product(title="Sudan Rume")) == "Sudan Rume"
+    assert brief.prized_variety(_product(title="Daily Blend", variety="Pacamara")) == (
+        "Pacamara"
+    )
+    assert "VARIETY:Gesha" in brief.product_flags(_product(title="Takesi Gesha"))
+    assert brief.prized_variety(_product(title="Washed Ethiopia")) == ""
+
+
+def test_page_navigation_never_lands_a_variety_on_someone_elses_coffee():
+    """Measured: matching the full page text turned 35 real hits into 112.
+
+    A shop's nav and related-products rail mention its Geshas on every page,
+    which made an Ethiopian natural read as Pacamara and a Maracaturra read
+    as Geisha. Reading only title and variety is the entire fix.
+    """
+    product = _product(
+        title="Ethiopia Mullugeta Muntasha Natural",
+        variety="Heirloom",
+        raw_product_text=(
+            "Shop All Coffee Gesha Pacamara Subscriptions | You may also like: "
+            "Panama Savage Coffees Gesha, El Salvador Santa Rosa Pacamara"
+        ),
+    )
+    assert brief.prized_variety(product) == ""
+    assert not any(f.startswith("VARIETY:") for f in brief.product_flags(product))
+
+
+def test_the_prized_roster_is_uncapped_but_only_buyable():
+    """A roster, not a shortlist: its job is that nothing rare goes unsaid."""
+    catalog = _catalog([
+        _product(product_url="https://e.com/1", title="Takesi Gesha"),
+        _product(product_url="https://e.com/2", title="Sudan Rume"),
+        _product(
+            product_url="https://e.com/3", title="Gesha Aponte", availability="unavailable"
+        ),
+        _product(
+            product_url="https://e.com/4",
+            title="Hidden Gesha",
+            storefront_status="storefront_unavailable",
+        ),
+        _product(product_url="https://e.com/5", title="Washed Brazil"),
+    ])
+    out = brief.render_prized(catalog)
+    assert "2 buyable product(s)" in out
+    assert "Takesi Gesha" in out and "Sudan Rume" in out
+    # Sold out and page-blocked cannot be bought; a plain Brazil is not rare.
+    assert "Gesha Aponte" not in out
+    assert "Hidden Gesha" not in out
+    assert "Washed Brazil" not in out
+
+
+def test_the_header_points_at_the_prized_roster():
+    catalog = _catalog([
+        _product(product_url="https://e.com/1", title="Takesi Gesha"),
+        _product(product_url="https://e.com/2"),
+    ])
+    header = "\n".join(brief.coverage(catalog))
+    assert "prized varieties: 1 available product(s)" in header
+    assert "--prized" in header
