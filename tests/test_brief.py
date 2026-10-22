@@ -525,6 +525,26 @@ def test_a_competition_mention_is_flagged_wherever_it_appears():
         assert "COMP-MENTION" in brief.product_flags(_product(**{field: text}))
 
 
+def test_the_idiom_in_the_first_place_is_not_a_placing():
+    """Verbatim from a Dayglow page: it shortlisted a Catuai with no record."""
+    product = _product(
+        raw_product_text=(
+            "Moises was the one who let me experiment with shade dried coffee "
+            "in the first place and we found that the green coffee will stay "
+            "fresh for a longer time"
+        )
+    )
+    assert not brief.mentions_competition(product)
+    assert "COMP-MENTION" not in brief.product_flags(product)
+    # The idiom is the only exclusion; a real placing still reads as one.
+    assert brief.mentions_competition(
+        _product(raw_product_text="obtaining 4th place in COE 2017")
+    )
+    assert brief.mentions_competition(
+        _product(raw_product_text="including multiple first-place finishes")
+    )
+
+
 def test_an_ordinary_coffee_is_not_flagged():
     assert not brief.mentions_competition(
         _product(raw_product_text="a lovely washed Ethiopia, chocolate and citrus")

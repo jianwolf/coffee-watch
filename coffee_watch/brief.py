@@ -257,9 +257,13 @@ def mentions_competition(product: dict[str, Any]) -> bool:
 # phrase can belong to a neighbouring lot, the farm's history or a
 # subscription blurb, so the flag says "check this" and the agent confirms
 # against --detail that the placing belongs to this coffee.
+# "in the first place" is an English idiom, not a placing, and it put a
+# Catuai with no competition history whatsoever on a shortlist of
+# competition coffees. The lookbehind is the whole fix: every other reading
+# of "first place" on a coffee page is a result.
 COMPETITION_RE = re.compile(
     r"cup of excellence|\bCOE\b|best of panama|\bBOP\b|auction lot|"
-    r"(?:1st|2nd|3rd|first|second|third)[- ]place|national winner",
+    r"(?<!in the )(?:1st|2nd|3rd|first|second|third)[- ]place|national winner",
     re.IGNORECASE,
 )
 
