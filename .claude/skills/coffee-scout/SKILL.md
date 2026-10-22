@@ -205,22 +205,46 @@ Shape it loosely, in this order:
 
 - one short line of state - date, how many roasters returned data, and the
   verdict for the day
-- **every tier-one coffee**, strongest first. Rows carrying `COMP-MENTION` are
-  the candidates: confirm with `--detail` that the placing belongs to *this*
-  lot rather than the farm's history, a neighbouring lot or a subscription
-  blurb, and drop the ones that do not. A third-party placing is the one claim
-  the seller could not have written, so the reader should never have to
-  wonder whether one went unmentioned - there is no cap on this group. Expect
-  roughly 6% of a catalog to mention one and rather fewer to survive the check.
-  Give each a single tight line.
+- **every tier-one coffee, all of them.** The candidates are every row
+  carrying `COMP-MENTION`; the header gives the count. Check **each one** with
+  `--detail` and read its whole output rather than grepping a few lines - a
+  truncated read is how a coffee ends up described as "flavour not captured"
+  when the page has it. Drop only the ones where the placing turns out to
+  belong to the farm's history, a neighbouring lot or a subscription blurb, and
+  list every single one that survives. There is no cap: a third-party placing
+  is the one claim the seller could not have written, so the reader must never
+  be left wondering whether one went unmentioned. Say the arithmetic in the
+  state line - checked N, listed M, dropped K - so the reader can see the list
+  is complete rather than trusting that it is. Twenty entries is a correct
+  answer on a day with twenty.
 - **tier two and three only when `is_new`**, and only the ones that stand out
   even among those. This is a budget, not a quality judgement: recency still
   says nothing about how good a coffee is, it only decides what is worth
   raising again today versus what was already on the shelf yesterday. A
   standing tier-two coffee is not worse for being three weeks old - it simply
-  is not news a second time.
-- each entry gets a sentence or two about how it tastes and why it earns its
-  place
+  is not news a second time. When no earlier catalog exists, `is_new` is the
+  roaster's own `published_at`; say so once rather than claiming a real delta.
+
+**Every entry has to earn its place in its own words.** One or two lines, and
+they must say why this coffee is worth your attention - not what is missing
+about it:
+
+- **The placing, specifically.** Which competition, which year, which rank, and
+  whose it is. "2026 Honduras Cup of Excellence #4" earns a line; "has won
+  awards" does not.
+- **How it tastes.** Most rows keep the notes in the page text, so take them
+  from the `--detail` output. Only say the flavour was not captured after you
+  have actually read that output and found none.
+- **What makes it unusual** when the page supports it: the variety, a process
+  described concretely (hours, stages, temperatures), the producer's record,
+  the elevation.
+
+An entry that is only caveats is a failure. If, after reading the detail, you
+cannot say anything concrete about why a coffee belongs on the list, it does
+not belong on the list - drop it instead of listing it with an apology.
+Caveats (unverified size, API weight, aged stock) ride at the end of the line
+they belong to, never as the whole line.
+
 - a clause for anything close but not urgent, if there is any
 - caveats only where they would change a purchase, as one short line
 
