@@ -26,6 +26,7 @@
 - The analysis skill lives in `.claude/skills/coffee-scout/`.
 - Catalog projection for agent reading lives in `coffee_watch/brief.py`; the egress-allowlist helper lives in `coffee_watch/hosts.py`.
 - User-curated buying state (standing preferences, watchlist, purchase log with taste verdicts) lives in `purchase-journal.md` at the repo root; the skill reads it every session and may append to it, but must never delete user-written content.
+- `scripts/notify_discord.py` posts a finished note to a Discord webhook; `scripts/discord_listen.py` is the other direction, answering the owner's questions in that channel from a machine you keep awake. Both are stdlib-only and both read their credentials from the environment, never from the repo.
 - Config files are under `config/` (for example `config/roasters.json` and `config/denylist.txt`).
 - Generated outputs go to `reports/` and `logs/`.
 - Tests live under `tests/`.

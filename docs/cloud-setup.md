@@ -187,3 +187,69 @@ scheduled run must not do.
 - **No `gh pr create`.** The GitHub proxy rejects GraphQL, so `gh pr`/`gh issue`
   fail; REST through `gh api repos/{owner}/{repo}/pulls` works, as does the
   session's own Create PR button. Not needed for scouting, which writes nothing.
+
+## 5. Asking questions back, from the Discord channel
+
+The webhook in section 4 only posts. Reading the channel needs a **bot
+application**, and `scripts/discord_listen.py` turns what you type there into
+a headless Claude Code turn in this repo, then posts the answer back. It runs
+wherever you keep a machine awake - a Mac mini, not the cloud, because a
+routine run is a disposable VM that exists for three minutes.
+
+It polls `GET /channels/{id}/messages?after=` every few seconds rather than
+holding a gateway socket, which keeps it stdlib-only like the notifier.
+
+### Why it only answers one person
+
+Whatever is typed in the channel becomes the prompt for a Claude Code session
+on your machine, running with `--permission-mode bypassPermissions`. The
+author check is the entire boundary between "I can drive my Mac mini from my
+phone" and "anyone holding the invite link can". The script refuses to start
+without `DISCORD_OWNER_ID` for that reason, and it ignores every other author
+and every bot - including the scouting webhook, which would otherwise answer
+itself in a loop.
+
+### Setup
+
+1. **Create the bot.** discord.com/developers → New Application → Bot. Copy
+   the token once; it is shown only at creation.
+2. **Enable MESSAGE CONTENT.** Bot → Privileged Gateway Intents → Message
+   Content Intent. This gates message text across Discord's REST API as well
+   as the gateway: without it, `content` arrives as an empty string and the
+   listener sees every message as blank. For an app in under 100 servers you
+   can toggle it yourself.
+3. **Invite it.** OAuth2 → URL Generator → scopes `bot`, permissions
+   `View Channels`, `Send Messages`, `Read Message History`. Open the URL and
+   add it to your server.
+4. **Get the two ids.** Discord Settings → Advanced → Developer Mode, then
+   right-click the channel → Copy Channel ID, and right-click yourself →
+   Copy User ID.
+5. **Check it once in the foreground**, which drains the channel a single
+   time and exits:
+
+```bash
+DISCORD_BOT_TOKEN='...' DISCORD_CHANNEL_ID='...' DISCORD_OWNER_ID='...' \
+    python3 scripts/discord_listen.py --once
+```
+
+6. **Keep it running** with launchd. Put the three values in
+   `~/Library/LaunchAgents/coffee-watch-discord.plist` as
+   `EnvironmentVariables`, point `ProgramArguments` at
+   `/usr/bin/python3 <repo>/scripts/discord_listen.py`, set `RunAtLoad` and
+   `KeepAlive` to true, and `launchctl load` it. Never commit that plist: it
+   holds the token.
+
+### The authentication it runs on
+
+A subscription OAuth session, not an API key - so questions come out of the
+plan rather than metered billing. The cost is that the session expires if the
+machine goes long enough without using `claude`, and a 24/7 listener that
+quietly stops answering is worse than one that says why. When a turn comes
+back with an authentication error the listener posts that into the channel
+instead of going silent; sign in again with `claude` on that machine.
+
+### What it cannot do
+
+It answers in the channel, with whatever `coffee-scout` and the repo can see.
+It is not the scheduled routine and does not replace it: the 8:07 note still
+comes from the cloud routine, which needs no machine of yours to be awake.
