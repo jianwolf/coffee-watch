@@ -124,8 +124,7 @@ The brief's flags are mechanical, not verdicts. What they mean for buying:
   capped at each roaster's newest 25, so their older stock is simply absent -
   do not read that as sold out.
 - **`$/100g` only compares within a tier.** A 100 g trophy bag is a different
-  product from a 250 g daily bag, not an overpriced version of it. Note how long
-  the bags last at roughly two bags a month.
+  product from a 250 g daily bag, not an overpriced version of it.
 - **`COMP-MENTION` is a mention, not a result.** The page names a placing
   somewhere; it may be the farm's back catalogue, the variety's reputation,
   the region or a subscription blurb. `--competition` extracts the phrase so

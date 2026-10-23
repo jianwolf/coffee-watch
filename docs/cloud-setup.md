@@ -129,10 +129,12 @@ Exit codes are distinct on purpose: `3` means no webhook was configured, `1`
 means the post failed. A run that scouted correctly but could not deliver is
 not the same failure as a run that found nothing.
 
-## 4b. A monthly routine
+## 4b. The routine
 
-The scouting cadence is about once a month. Routines hold the schedule on your
-claude.ai account, not in this repo.
+The routine runs daily at 13:07 UTC. Daily is justified by one thing and it is
+worth stating: scarcity. SEY's 2026 Gales Gesha was listed on 21 October and
+sold out inside two days, so a weekly cadence would have missed it entirely.
+Routines hold the schedule on your claude.ai account, not in this repo.
 
 Create one from the CLI with `/schedule`, or at claude.ai/code/routines. There is
 no monthly preset, so pick the closest one and then set a cron expression with
@@ -148,7 +150,6 @@ Monthly coffee scouting run. Scrape all configured roasters, then reply in the
 session with the short Chinese scouting note the skill defines.
 
 - Read purchase-journal.md first and check every watchlist item.
-- Use --new-window-days 35 so the window matches the monthly cadence.
 - If the scraper exits 3, or more than half the roasters return nothing, still
   reply: say what was collected, name the cause from logs/coffee_watch.log, and
   do not present an empty catalog as a quiet month.
